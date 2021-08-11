@@ -7,34 +7,39 @@
 namespace paddle {
 namespace piano {
 
-using note::Function;
-using note::Module;
+#define PIANO_PASS_LIST(__macro)              \
+  __macro(InliningPass)
 
 template<typename T>
 using StringMap = std::unordered_map<std::string, T>;
 using String = std::string;
 
-enum PassKind : char {
-  // Function pass
-  PASSKIND_FUN,
-  // Module pass
-  PASSKIND_MOD,
-  // Virtual pass
-  PASSKIND_VIR
+#define PASSID(name) PASS__##name
+
+enum PassId {
+  #define ID(name) PASS_ID(name),
+    PIANO_PASS_LIST(ID)
+  #undef ID
 };
 
-template<typename ir_type>
+#define INC(name) +1
+  constexpr int PIANO_NUM_PASSES = PIANO_PASS_LIST(INC);
+#undef INC
+
 class Pass {
-  PassKind kind_;
  public:
   Pass(CompilerContext *cc);
   virtual ~Pass();
-  virtual PassKind kind() = 0;
-  virtual String&& name() = 0;
-  virtual bool analyze(CompilerContext *cc, std::shared_ptr<ir_type>&& ir) = 0;
-  virtual bool transform(CompilerContext *cc, std::unique_ptr<ir_type>&& ir) = 0;
   virtual bool run(CompilerContext *cc) = 0;
+  virtual PassId PassId() = 0;
 };
+
+#define DECL(name)              \
+class name : Pass {};
+
+PIANO_PASS_LIST(DECL)
+
+#undef DECL
 
 }
 }
