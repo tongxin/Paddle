@@ -1,0 +1,116 @@
+// Copyright (c) 2021 PaddlePaddle Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package paddle.piano.note;
+
+option cc_enable_arenas = true;
+
+// Element data type
+enum ElementType {
+  INVALID_ELEMENT_TYPE = 0;
+  B1 = 1; // bool
+  S8 = 2;
+  S16 = 3;
+  S32 = 4;
+  S64 = 5;
+  U8 = 6;
+  U16 = 7;
+  U32 = 8;
+  U64 = 9;
+  F16 = 10;
+  F32 = 11;
+  F64 = 12;
+
+  ELEMENT_TYPE_TUPLE = 13;
+}
+
+// Memory layout
+message LayoutProto { repeated int64 minor_to_major = 1; }
+
+// Info about shape, including type,
+// dimension and memory layout
+message ShapeProto {
+  required ElementType element_type = 1;
+  repeated int64 dimensions = 2;
+  optional LayoutProto layout = 3;
+  // For tuples only, the shapes of constituent shapes in the tuple sequence.
+  repeated ShapeProto tuple_shapes = 4;
+}
+
+// Shape of params and res
+message SignatureProto {
+  repeated ShapeProto parameters = 1;
+  repeated string parameter_names = 2;
+  optional ShapeProto result = 3;
+}
+
+// Attribute value
+message AttrValue {
+  message StringList { repeated string strings = 1; }
+  message BoolList { repeated bool bools = 2 [ packed = true ]; }
+  message IntList { repeated int32 ints = 3 [ packed = true ]; }
+  message LongList { repeated int64 longs = 4 [ packed = true ]; }
+  message FloatList { repeated float floats = 5 [ packed = true ]; }
+  message DoubleList { repeated double float64s = 6 [ packed = true ]; }
+
+  oneof value {
+    string s = 1;
+    bool b = 2;
+    int32 i = 3;
+    int64 l = 4;
+    float f = 5;
+    double d = 6;
+    StringList strings = 7;
+    BoolList bools = 8;
+    IntList ints = 9;
+    LongList longs = 10;
+    FloatList floats = 11;
+    DoubleList float64s = 12;
+  }
+}
+
+// Instruction
+message InstructionProto {
+  required string name = 1;
+  required string opcode = 2;
+  required ShapeProto shape = 3;
+  required int64 id = 4;
+  repeated int64 operand_ids = 5;
+  repeated int64 control_predecessor_ids = 6;
+  repeated int64 called_function_ids = 7;
+  optional int64 parameter_number = 8;
+  optional string fusion_kind = 9;
+  map<string, AttrValue> attrs = 10;
+}
+
+// Function
+message FunctionProto {
+  required string name = 1;
+  repeated InstructionProto instructions = 2;
+  required SignatureProto signature = 3;
+  required int64 id = 4;
+  required int64 root_id = 5;
+}
+
+// Module
+message ModuleProto {
+  required string name = 1;
+  required string entry_function_name = 2;
+  repeated FunctionProto functions = 3;
+  required SignatureProto entry_function_signature = 4;
+  required int64 id = 5;
+  required int64 entry_function_id = 6;
+}
