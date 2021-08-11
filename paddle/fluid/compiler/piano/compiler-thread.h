@@ -67,8 +67,8 @@ class ThreadPool {
     virtual void Run() = 0;
 
    private:
-    Task(const Task&) = delete;                                          \
-    void operator=(const Task&) = delete;
+    Task(const Task&);                                          \
+    void operator=(const Task&);
   };
 
   explicit ThreadPool(int max_pool_size = 0);
@@ -94,8 +94,8 @@ class ThreadPool {
     CompilerThread* thread_;
     bool is_blocked_ = false;
 
-    Worker(const Worker&) = delete;                                          \
-    void operator=(const Worker&) = delete;
+    Worker(const Worker&);                                          \
+    void operator=(const Worker&);
   };
 
  private:
@@ -110,8 +110,8 @@ class ThreadPool {
   std::vector<Task> tasks_;
   int max_pool_size_ = 0;
 
-  ThreadPool(const ThreadPool&) = delete;                                          \
-  void operator=(const ThreadPool&) = delete;
+  ThreadPool(const ThreadPool&);                                          \
+  void operator=(const ThreadPool&);
 };
 
 }
