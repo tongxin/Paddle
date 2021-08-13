@@ -15,60 +15,61 @@
 
 namespace paddle {
 namespace piano {
-namespace backends {
 
 namespace note {
 class Instruction;
 }
+
+namespace backends {
 
 class NoteVisitorBase {
  public:
   virtual ~NoteVisitorBase() {}
 
   // Scalar op
-  virtual void VisitConstant(const note::Instruction*) = 0;
+  virtual void VisitConstant(const note::Instruction&) = 0;
 
   // ops can be replaced by library
-  virtual void VisitBatchNormGrad(const note::Instruction*) = 0;
-  virtual void VisitBatchNormInference(const note::Instruction*) = 0;
-  virtual void VisitBatchNormTraining(const note::Instruction*) = 0;
-  virtual void VisitConvolution(const note::Instruction*) = 0;
-  virtual void VisitDot(const note::Instruction*) = 0;
+  virtual void VisitBatchNormGrad(const note::Instruction&) = 0;
+  virtual void VisitBatchNormInference(const note::Instruction&) = 0;
+  virtual void VisitBatchNormTraining(const note::Instruction&) = 0;
+  virtual void VisitConvolution(const note::Instruction&) = 0;
+  virtual void VisitDot(const note::Instruction&) = 0;
 
   // Unary
-  virtual void VisitBroadcast(const note::Instruction*) = 0;
-  virtual void VisitCast(const note::Instruction*) = 0;
-  virtual void VisitCopy(const note::Instruction*) = 0;
-  virtual void VisitExp(const note::Instruction*) = 0;
-  virtual void VisitLog(const note::Instruction*) = 0;
-  virtual void VisitNegative(const note::Instruction*) = 0;
-  virtual void VisitNot(const note::Instruction*) = 0;
-  virtual void VisitReshape(const note::Instruction*) = 0;
-  virtual void VisitReverse(const note::Instruction*) = 0;
-  virtual void VisitRsqrt(const note::Instruction*) = 0;
-  virtual void VisitSlice(const note::Instruction*) = 0;
-  virtual void VisitSqrt(const note::Instruction*) = 0;
-  virtual void VisitTranspose(const note::Instruction*) = 0;
+  virtual void VisitBroadcast(const note::Instruction&) = 0;
+  virtual void VisitCast(const note::Instruction&) = 0;
+  virtual void VisitCopy(const note::Instruction&) = 0;
+  virtual void VisitExp(const note::Instruction&) = 0;
+  virtual void VisitLog(const note::Instruction&) = 0;
+  virtual void VisitNegative(const note::Instruction&) = 0;
+  virtual void VisitNot(const note::Instruction&) = 0;
+  virtual void VisitReshape(const note::Instruction&) = 0;
+  virtual void VisitReverse(const note::Instruction&) = 0;
+  virtual void VisitRsqrt(const note::Instruction&) = 0;
+  virtual void VisitSlice(const note::Instruction&) = 0;
+  virtual void VisitSqrt(const note::Instruction&) = 0;
+  virtual void VisitTranspose(const note::Instruction&) = 0;
 
   // Binary
-  virtual void VisitAdd(const note::Instruction*) = 0;
-  virtual void VisitAnd(const note::Instruction*) = 0;
-  virtual void VisitCompare(const note::Instruction*) = 0;
-  virtual void VisitDivide(const note::Instruction*) = 0;
-  virtual void VisitMaximum(const note::Instruction*) = 0;
-  virtual void VisitMinimum(const note::Instruction*) = 0;
-  virtual void VisitMultiply(const note::Instruction*) = 0;
-  virtual void VisitOr(const note::Instruction*) = 0;
-  virtual void VisitSubtract(const note::Instruction*) = 0;
-  virtual void VisitXor(const note::Instruction*) = 0;
+  virtual void VisitAdd(const note::Instruction&) = 0;
+  virtual void VisitAnd(const note::Instruction&) = 0;
+  virtual void VisitCompare(const note::Instruction&) = 0;
+  virtual void VisitDivide(const note::Instruction&) = 0;
+  virtual void VisitMaximum(const note::Instruction&) = 0;
+  virtual void VisitMinimum(const note::Instruction&) = 0;
+  virtual void VisitMultiply(const note::Instruction&) = 0;
+  virtual void VisitOr(const note::Instruction&) = 0;
+  virtual void VisitSubtract(const note::Instruction&) = 0;
+  virtual void VisitXor(const note::Instruction&) = 0;
 
   // other
-  virtual void VisitSelect(const note::Instruction*) = 0;
-  virtual void VisitConcatenate(const note::Instruction*) = 0;
-  virtual void VisitReduce(const note::Instruction*) = 0;
-  virtual void VisitRng(const note::Instruction*) = 0;
-  virtual void VisitSort(const note::Instruction*) = 0;
-  virtual void VisitTuple(const note::Instruction*) = 0;
+  virtual void VisitSelect(const note::Instruction&) = 0;
+  virtual void VisitConcatenate(const note::Instruction&) = 0;
+  virtual void VisitReduce(const note::Instruction&) = 0;
+  virtual void VisitRng(const note::Instruction&) = 0;
+  virtual void VisitSort(const note::Instruction&) = 0;
+  virtual void VisitTuple(const note::Instruction&) = 0;
 };
 
 }  // namespace backends

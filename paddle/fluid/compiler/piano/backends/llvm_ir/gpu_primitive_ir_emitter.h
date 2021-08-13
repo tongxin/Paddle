@@ -24,28 +24,31 @@ class GpuPrimitiveIrEmitter : public PrimitiveIrEmitter {
  public:
   virtual std::function<llvm::Value*(llvm::Value*, llvm::Value*,
                                      llvm::IRBuilder<>*)>
-  GetBinaryOp(const note::Instruction*) = 0;
+  GetBinaryOp(const note::Instruction&) = 0;
   virtual std::function<llvm::Value*(llvm::Value*, llvm::IRBuilder<>*)>
-  GetUnaryOp(const note::Instruction*) = 0;
+  GetUnaryOp(const note::Instruction&) = 0;
 
-  void VisitElementwiseUnary(const note::Instruction*) override;
-  void VisitElementwiseBinary(const note::Instruction*) override;
+  void VisitElementwiseUnary(const note::Instruction&) override;
+  void VisitElementwiseBinary(const note::Instruction&) override;
+
+  // Scalar op
+  void VisitConstant(const note::Instruction&) override;
 
   // Unary
-  void VisitBroadcast(const note::Instruction*) override;
-  void VisitCopy(const note::Instruction*) override;
-  void VisitReshape(const note::Instruction*) override;
-  void VisitReverse(const note::Instruction*) override;
-  void VisitSlice(const note::Instruction*) override;
-  void VisitTranspose(const note::Instruction*) override;
+  void VisitBroadcast(const note::Instruction&) override;
+  void VisitCopy(const note::Instruction&) override;
+  void VisitReshape(const note::Instruction&) override;
+  void VisitReverse(const note::Instruction&) override;
+  void VisitSlice(const note::Instruction&) override;
+  void VisitTranspose(const note::Instruction&) override;
 
   // other
-  void VisitSelect(const note::Instruction*) override;
-  void VisitConcatenate(const note::Instruction*) override;
-  void VisitReduce(const note::Instruction*) override;
-  void VisitRng(const note::Instruction*) override;
-  void VisitSort(const note::Instruction*) override;
-  void VisitTuple(const note::Instruction*) override;
+  void VisitSelect(const note::Instruction&) override;
+  void VisitConcatenate(const note::Instruction&) override;
+  void VisitReduce(const note::Instruction&) override;
+  void VisitRng(const note::Instruction&) override;
+  void VisitSort(const note::Instruction&) override;
+  void VisitTuple(const note::Instruction&) override;
 
   // about the base code block,
   virtual llvm::Value* ThreadIdx(llvm::IRBuilder<>*) = 0;

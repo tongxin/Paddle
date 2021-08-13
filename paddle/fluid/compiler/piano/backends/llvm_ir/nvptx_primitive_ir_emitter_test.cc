@@ -20,28 +20,28 @@ namespace paddle {
 namespace piano {
 namespace backends {
 
-TEST(NvptxPrimitiveIrEmitter, GetBinaryOp) {
-  NvptxPrimitiveIrEmitter nvptx_primitive_ir_emitter;
-  auto op = nvptx_primitive_ir_emitter.GetUnaryOp(nullptr);
-}
-
-TEST(NvptxPrimitiveIrEmitter, GetUnaryOp) {
-  NvptxPrimitiveIrEmitter nvptx_primitive_ir_emitter;
-  auto op = nvptx_primitive_ir_emitter.GetBinaryOp(nullptr);
-}
-
 TEST(NvptxPrimitiveIrEmitter, DeviceBaseOp) {
   NvptxPrimitiveIrEmitter nvptx_primitive_ir_emitter;
-  ASSERT_EQ(nvptx_primitive_ir_emitter.ThreadIdx(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.ThreadIdy(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.ThreadIdz(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockDimx(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockDimy(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockDimz(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockIdx(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockIdy(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.BlockIdz(nullptr), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.Alloca(nullptr), nullptr);
+  llvm::LLVMContext context;
+  llvm::Module module("DeviceBaseOp", context);
+  llvm::IRBuilder<> builder(context);
+  llvm::FunctionType *func_type =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+  llvm::Function *init_fn = llvm::Function::Create(
+      func_type, llvm::Function::ExternalLinkage, "init", module);
+  llvm::BasicBlock *entry = llvm::BasicBlock::Create(context, "entry", init_fn);
+  builder.SetInsertPoint(entry);
+
+  ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdx(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdy(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdz(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockDimx(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockDimy(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockDimz(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdx(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdy(&builder), nullptr);
+  ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdz(&builder), nullptr);
+  ASSERT_EQ(nvptx_primitive_ir_emitter.Alloca(nullptr, 0), nullptr);
 }
 
 }  // namespace backends
