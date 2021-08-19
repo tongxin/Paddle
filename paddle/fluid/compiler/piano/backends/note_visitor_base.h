@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 #pragma once
 
 namespace paddle {
@@ -18,7 +19,7 @@ namespace piano {
 
 namespace note {
 class Instruction;
-}
+}  // namespace note
 
 namespace backends {
 
@@ -28,6 +29,8 @@ class NoteVisitorBase {
 
   // Scalar op
   virtual void VisitConstant(const note::Instruction&) = 0;
+  // TODO(sunli): use the pure virtual function instead
+  virtual void VisitParameter(const note::Instruction&) {}
 
   // ops can be replaced by library
   virtual void VisitBatchNormGrad(const note::Instruction&) = 0;

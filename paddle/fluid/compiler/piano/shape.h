@@ -35,7 +35,8 @@ class Shape {
   explicit Shape(const note::ShapeProto& proto);
 
   // Construct a shape with detail data member
-  Shape(note::ElementType element_type, const std::vector<int64_t>& dimensions,
+  Shape(note::ElementTypeProto element_type,
+        const std::vector<int64_t>& dimensions,
         std::vector<Shape> tuple_shapes = {})
       : element_type_(element_type),
         dimensions_(dimensions.begin(), dimensions.end()),
@@ -62,12 +63,42 @@ class Shape {
   bool IsArray() const { return !IsTuple(); }
   bool IsTuple() const { return element_type() == note::ELEMENT_TYPE_TUPLE; }
 
+  // an option indicates how to compare two shapes
+  struct CompareOption {
+    CompareOption& IgnoreElementType() {
+      ignore_element_type = true;
+      return *this;
+    }
+
+    CompareOption& IgnoreDimensions() {
+      ignore_dimensions = true;
+      return *this;
+    }
+
+    CompareOption& IgnoreLayout() {
+      ignore_layout = true;
+      return *this;
+    }
+
+    bool ignore_element_type = false;
+    bool ignore_dimensions = false;
+    bool ignore_layout = false;
+  };
+
+  // overload euqal operator that tests all fields of the shape are the same
+  bool EqualTo(const Shape& other, const CompareOption& option) const;
+  bool operator==(const Shape& other) const {
+    static CompareOption default_option;
+    return EqualTo(other, default_option);
+  }
+  bool operator!=(const Shape& other) const { return !(*this == other); }
+
   // The following methods for accessing the data member of a Shape object
   // stores.
   //
   // Methods for accessing the element type.
-  note::ElementType element_type() const { return element_type_; }
-  void set_element_type(note::ElementType value) { element_type_ = value; }
+  note::ElementTypeProto element_type() const { return element_type_; }
+  void set_element_type(note::ElementTypeProto value) { element_type_ = value; }
 
   // Methods for accessing the dimensions array.
   std::vector<int64_t>* mutable_dimensions() { return &dimensions_; }
@@ -85,7 +116,7 @@ class Shape {
 
  private:
   // The element type of this shape (tuple, array, etc).
-  note::ElementType element_type_ = note::INVALID_ELEMENT_TYPE;
+  note::ElementTypeProto element_type_ = note::INVALID_ELEMENT_TYPE;
 
   // The array bounds of the dimensions.
   std::vector<int64_t> dimensions_;

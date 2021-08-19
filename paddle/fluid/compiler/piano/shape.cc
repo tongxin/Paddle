@@ -46,7 +46,7 @@ note::ShapeProto Shape::ToProto() const {
 }
 
 std::string Shape::ToString() const {
-  auto dtype_name = note::ElementType_Name(element_type());
+  auto dtype_name = note::ElementTypeProto_Name(element_type());
   std::transform(dtype_name.begin(), dtype_name.end(), dtype_name.begin(),
                  [](const auto& c) { return std::tolower(c); });
 
@@ -57,8 +57,23 @@ std::string Shape::ToString() const {
 
   return paddle::string::format_string(
       "%s[%s]%s", dtype_name.c_str(),
-      paddle::string::join_strings(dim_names, ',').c_str(),
+      paddle::string::join_strings(dim_names, ", ").c_str(),
       layout().ToString().c_str());
+}
+
+bool Shape::EqualTo(const Shape& other, const CompareOption& option) const {
+  if (!option.ignore_element_type && element_type() != other.element_type()) {
+    return false;
+  }
+
+  if (!option.ignore_dimensions && dimensions() != other.dimensions()) {
+    return false;
+  }
+
+  if (!option.ignore_layout && layout() != other.layout()) {
+    return false;
+  }
+  return true;
 }
 
 Signature::Signature(const note::SignatureProto& proto) {
@@ -97,7 +112,7 @@ std::string Signature::ToString() const {
   }
 
   return paddle::string::format_string(
-      "(%s) -> %s", paddle::string::join_strings(names, ',').c_str(),
+      "(%s) -> %s", paddle::string::join_strings(names, ", ").c_str(),
       result().ToString().c_str());
 }
 

@@ -33,9 +33,9 @@ class PrimitiveIrGenerator {
 
   ~PrimitiveIrGenerator() {}
 
-  std::string GetName() { return generator_name_; }
+  std::string GetName() const { return generator_name_; }
 
-  std::string GetType() { return generator_type_; }
+  std::string GetType() const { return generator_type_; }
 
   Generator& GetGenerator() { return generator_; }
 

@@ -12,32 +12,23 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
-#include "paddle/fluid/compiler/piano/layout.h"
+#include "paddle/fluid/compiler/piano/backends/llvm_ir/nvptx_ir_emitter.h"
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 
 namespace paddle {
 namespace piano {
+namespace backends {
 
-class LayoutTest : public ::testing::Test {
- protected:
-  const Layout layout_ = Layout({3, 2, 1, 0});
-};
+TEST(NvptxIrEmitter, TestOp) {
+  llvm::LLVMContext llvm_context;
+  llvm::Module llvm_module("test", llvm_context);
+  Schedules schedules;
 
-TEST_F(LayoutTest, LayoutTransWithProto) {
-  // Layout::ToProto and construct from a note::LayoutProto
-  auto&& layout_proto = layout_.ToProto();
-  ASSERT_EQ(4, layout_proto.minor_to_major_size());
-  EXPECT_EQ(1, layout_proto.minor_to_major(2));
-
-  Layout layout_from_proto(layout_proto);
-  ASSERT_TRUE(layout_from_proto.Valid());
-  ASSERT_EQ(4U, layout_from_proto.minor_to_major().size());
+  // create ir emitter
+  NvptxIrEmitter nvptx_ir_emitter(&llvm_module, &schedules);
 }
 
-TEST_F(LayoutTest, LayoutToString) {
-  ASSERT_EQ("{3, 2, 1, 0}", layout_.ToString());
-}
-
+}  // namespace backends
 }  // namespace piano
 }  // namespace paddle

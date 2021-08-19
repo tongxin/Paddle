@@ -43,6 +43,10 @@ class Layout {
   // Return whether this layout is valid
   bool Valid() const;
 
+  // Return whether this layout euqal to the other
+  bool operator==(const Layout& other) const;
+  bool operator!=(const Layout& other) const { return !(*this == other); }
+
   // The following methods for accessing the data member of a Layout object
   // stores.
   //

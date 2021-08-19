@@ -41,10 +41,18 @@ std::string Layout::ToString() const {
                  std::back_inserter(dim_names),
                  [](const auto& dim) { return std::to_string(dim); });
   return paddle::string::format_string(
-      "{%s}", paddle::string::join_strings(dim_names, ',').c_str());
+      "{%s}", paddle::string::join_strings(dim_names, ", ").c_str());
 }
 
 bool Layout::Valid() const { return !minor_to_major().empty(); }
+
+bool Layout::operator==(const Layout& other) const {
+  if (minor_to_major() != other.minor_to_major()) {
+    return false;
+  }
+
+  return true;
+}
 
 }  // namespace piano
 }  // namespace paddle
