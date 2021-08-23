@@ -22,27 +22,7 @@ namespace paddle {
 namespace piano {
 
 class Arena;
-class CompilerThread;
-
-class CompilerContext {
- public:
-  CompilerContext(CompilerThread* thread,
-                  bool is_jit) {
-    prev_cc_ = thread->SetCompilerContext(this);
-  }
-
-  ~CompilerContext() {
-    thread()->SetCompilerContext(prev_cc_);
-  }
-
-  CompilerThread* thread() { return t_; }
-  Arena *arena() const { return arena_; }
- private:
-  Arena *arena_ = nullptr;
-  CompilerThread* t_;
-  CompilerContext* prev_cc_;
-};
-
+class CompilerContext;
 
 class CompilerThread {
   
@@ -68,6 +48,26 @@ class CompilerThread {
  private:
   CompilerContext* cc_;
   static thread_local CompilerThread* t_;
+};
+
+
+class CompilerContext {
+ public:
+  CompilerContext(CompilerThread* thread,
+                  bool is_jit) {
+    prev_cc_ = thread->SetCompilerContext(this);
+  }
+
+  ~CompilerContext() {
+    thread()->SetCompilerContext(prev_cc_);
+  }
+
+  CompilerThread* thread() { return t_; }
+  Arena *arena() const { return arena_; }
+ private:
+  Arena *arena_ = nullptr;
+  CompilerThread* t_;
+  CompilerContext* prev_cc_;
 };
 
 class ThreadPool {

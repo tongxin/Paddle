@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #pragma once
+#include "paddle/fluid/compiler/piano/compiler-thread.h"
+#include "paddle/fluid/compiler/piano/arena.h"
 #include "paddle/fluid/platform/enforce.h"
 #include <functional>
 #include <memory>
@@ -25,12 +27,12 @@ namespace piano {
 // Use make_pass<SpecificPassType>(CompilerContext*) to create
 // a concrete pass object. 
 #define PASSDEF_ALL(__macro)    \
-  __macro(ExpandBatchNorm)      \
-  __macro(TransposeFolding)
+  __macro(ExpandBatchNorm)
 
-#define PASSDEF_ID        (pass) PASS_##pass
-#define PASSDEF_ID_       (pass) PASS_##pass,
-#define PASSDEF_CLASSNAME (pass) PASS##Pass
+
+#define PASSDEF_ID(pass)        PASS_##pass
+#define PASSDEF_ID_(pass)       PASS_##pass,
+#define PASSDEF_CLASSNAME(pass) pass##Pass
 
 // Pass id enum is used as key for dispatching pass classes
 enum class PassId {
@@ -50,21 +52,28 @@ class Pass {
   Pass() { cc_ = nullptr;}
   Pass(CompilerContext *cc) : cc_(cc) {}
   virtual ~Pass();
-  virtual bool run(void *ir) = 0;
+  virtual bool run(const void *ir) = 0;
   virtual std::string name() const = 0;
 };
 
 template<typename PassT>
 PassT *do_make_pass(CompilerContext *cc) {
-  char *p = cc.arena().allocate(sizeof(PassT));
+  char *p = (*cc->arena()).allocate(1, sizeof(PassT));
   return new(p) PassT(cc);
 }
 
-#define make_pass(pass, cc)     \
-  {
-    static_assert(PassId::PASSDEF_ID(pass) > PassId::PASS_NA);
-    do_make_pass<PASSDEF_CLASSNAME(pass)>(cc);
+#define make_pass(pass, cc)                                   \
+  {                                                           \
+    static_assert(PassId::PASSDEF_ID(pass) > PassId::PASS_NA);\
+    do_make_pass<PASSDEF_CLASSNAME(pass)>(cc);                \
   }
+
+
+
+#define DECL(pass)      \
+class PASSDEF_CLASSNAME(pass);
+PASSDEF_ALL(DECL)
+#undef DECL
 
 #undef PASSDEF_ID_
 

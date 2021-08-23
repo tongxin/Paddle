@@ -12,9 +12,9 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
-#include "paddle/fluid/compiler/note/pass.h"
-#include "paddle/fluid/compiler/note/instruction.h"
-#include "paddle/fluid/compiler/note/function.h"
+#include "paddle/fluid/compiler/piano/pass.h"
+#include "paddle/fluid/compiler/piano/note/instruction.h"
+#include "paddle/fluid/compiler/piano/note/function.h"
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 
@@ -28,6 +28,10 @@ using OpCode = note::OpCode;
 #define PASSDEF_ALL(__macro)      \
   __macro(ATest)
 
+#define DECL(pass)      \
+class PASSDEF_CLASSNAME(pass);
+PASSDEF_ALL(DECL)
+#undef DECL
 
 void verify_all_passes() {
 #define VAR(pass) _##pass
@@ -44,9 +48,9 @@ class ATestPass : Pass {
  public:
   ATestPass(CompilerContext *cc) : Pass(cc) {}
   ~ATestPass() override = default; 
-  bool run(const void *ir) override {
+  bool run(const void *fn) override {
     bool changed = false;
-    auto* ir = static_cast<Function*>(ir);
+    auto* ir = static_cast<Function*>(fn);
     auto dead_ins = std::vector<Instruction*>();
     for (const auto *instruction : ir->instructions()) {
       if (instruction->ctrl_predecessors().empty() &&
@@ -198,10 +202,6 @@ TEST_F(PassClassTest, SimpleFunctionPass) {
   LOG(INFO) << "A simple function pass detecting dead instructions.";
 }
 
-TEST_F(PassClassTest, FailUnregisteredPass) {
-  auto* b_pass = make_pass(BTest, nullptr);
-  EXPECT_THROW();
-}
 
 }
 }

@@ -12,15 +12,24 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License. */
 
-#include "paddle/fluid/compiler/note/pass.h"
+#include "paddle/fluid/compiler/piano/pass.h"
 
 namespace paddle {
 namespace piano {
 
+class ExpandBatchNormPass : Pass {
+ public:
+  ExpandBatchNormPass(CompilerContext *cc) : Pass(cc) {}
+  ~ExpandBatchNormPass() override = default; 
+  bool run(const void *ir) override {
+    bool changed = false;
 
-#define MAKER(pass)                     \
-  do_make_pass<PASSDEF_CLASSNAME(pass)>()
-
+    return changed;
+  }
+  std::string name() const override {
+    return "expand_batchnorm_pass";
+  }
+};
 
 void verify_all_passes() {
 #define VAR(pass) _##pass
