@@ -1,3 +1,17 @@
+/* Copyright (c) 2021 PaddlePaddle Authors. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License. */
+
 #ifndef PADDLE_COMPILER_COMPILER_THREAD_H
 #define PADDLE_COMPILER_COMPILER_THREAD_H
 
@@ -10,21 +24,23 @@ namespace piano {
 class Arena;
 class CompilerThread;
 
-class CompilerState {
+class CompilerContext {
  public:
-  CompilerState(CompilerThread* thread,
-                bool is_jit) {
-    previous_ = thread->SetCompilerState(this);
+  CompilerContext(CompilerThread* thread,
+                  bool is_jit) {
+    prev_cc_ = thread->SetCompilerContext(this);
   }
 
-  ~CompilerState() {
-    thread()->SetCompilerState(previous_);
+  ~CompilerContext() {
+    thread()->SetCompilerContext(prev_cc_);
   }
 
-  CompilerThread* thread() { return thread_; }
+  CompilerThread* thread() { return t_; }
+  Arena *arena() const { return arena_; }
  private:
-  CompilerThread* thread_;
-  CompilerState* previous_;
+  Arena *arena_ = nullptr;
+  CompilerThread* t_;
+  CompilerContext* prev_cc_;
 };
 
 
@@ -34,26 +50,24 @@ class CompilerThread {
   ~CompilerThread();
 
   static CompilerThread* Current() {
-    return current_thread_;
+    return t_;
   }
   
   void Run();
 
-  CompilerState* SetCompilerState(CompilerState* state) {
-    CompilerState* previous = compiler_state_;
-    compiler_state_ = state;
-    return previous;
+  CompilerContext* SetCompilerContext(CompilerContext* cc) {
+    CompilerContext* prev_cc = cc_;
+    cc_ = cc;
+    return prev_cc;
   }
 
-  CompilerState& compiler_state() {
-    return *compiler_state_;
+  CompilerContext& GetCompilerContext() {
+    return *cc_;
   }
 
-  Arena *arena() const { return arena_; }
  private:
-  Arena *arena_ = nullptr;
-  CompilerState* compiler_state_;
-  static thread_local CompilerThread* current_thread_;
+  CompilerContext* cc_;
+  static thread_local CompilerThread* t_;
 };
 
 class ThreadPool {
