@@ -11,22 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#pragma once
 
-#include <memory>
-#include <vector>
+#include "paddle/fluid/operators/share_buffer_op.h"
 
-namespace paddle {
-namespace piano {
-namespace backends {
-
-class ScheduleWrapper {
- public:
- protected:
-};
-
-using Schedules = std::vector<std::unique_ptr<ScheduleWrapper>>;
-
-}  // namespace backends
-}  // namespace piano
-}  // namespace paddle
+namespace ops = paddle::operators;
+REGISTER_OP_CUDA_KERNEL(share_buffer, ops::ShareBufferOpKernel<float>);

@@ -25,8 +25,9 @@ namespace backends {
 class NvptxIrEmitter : public GpuIrEmitter {
  public:
   NvptxIrEmitter() = delete;
-  explicit NvptxIrEmitter(llvm::Module* llvm_module, Schedules* schedule)
-      : GpuIrEmitter(llvm_module, schedule) {}
+  explicit NvptxIrEmitter(llvm::Module* llvm_module,
+                          KernelExecutableMap* kernel_executable_map)
+      : GpuIrEmitter(llvm_module, kernel_executable_map) {}
   ~NvptxIrEmitter() {}
 
   void VisitBatchNormGrad(const note::Instruction&) override;

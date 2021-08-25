@@ -21,7 +21,6 @@ namespace piano {
 namespace backends {
 
 TEST(NvptxPrimitiveIrEmitter, DeviceBaseOp) {
-  NvptxPrimitiveIrEmitter nvptx_primitive_ir_emitter;
   llvm::LLVMContext context;
   llvm::Module module("DeviceBaseOp", context);
   llvm::IRBuilder<> builder(context);
@@ -32,6 +31,7 @@ TEST(NvptxPrimitiveIrEmitter, DeviceBaseOp) {
   llvm::BasicBlock *entry = llvm::BasicBlock::Create(context, "entry", init_fn);
   builder.SetInsertPoint(entry);
 
+  NvptxPrimitiveIrEmitter nvptx_primitive_ir_emitter(&context, init_fn);
   ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdx(&builder), nullptr);
   ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdy(&builder), nullptr);
   ASSERT_NE(nvptx_primitive_ir_emitter.ThreadIdz(&builder), nullptr);
@@ -41,7 +41,7 @@ TEST(NvptxPrimitiveIrEmitter, DeviceBaseOp) {
   ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdx(&builder), nullptr);
   ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdy(&builder), nullptr);
   ASSERT_NE(nvptx_primitive_ir_emitter.BlockIdz(&builder), nullptr);
-  ASSERT_EQ(nvptx_primitive_ir_emitter.Alloca(nullptr, 0), nullptr);
+  ASSERT_EQ(nvptx_primitive_ir_emitter.Alloca(&builder, 0), nullptr);
 }
 
 }  // namespace backends
