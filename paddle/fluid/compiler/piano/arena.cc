@@ -45,5 +45,9 @@ char* Arena::allocate_aligned(const size_t bytes, size_t alignment) {
   return pos_;
 }
 
+bool Arena::expand(size_t new_size) {
+  PADDLE_THROW("Not implemented yet.");
+}
+
 }
 }

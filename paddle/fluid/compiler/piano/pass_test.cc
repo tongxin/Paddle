@@ -15,6 +15,7 @@ limitations under the License. */
 #include "paddle/fluid/compiler/piano/pass.h"
 #include "paddle/fluid/compiler/piano/note/instruction.h"
 #include "paddle/fluid/compiler/piano/note/function.h"
+#include "paddle/fluid/compiler/piano/note/note.pb.h"
 #include "glog/logging.h"
 #include "gtest/gtest.h"
 
@@ -22,63 +23,29 @@ namespace paddle {
 namespace piano {
 
 using Function = note::Function;
+using Instruction = note::Instruction;
 using OpCode = note::OpCode;
+using FunctionProto = note::FunctionProto;
+using SignatureProto = note::SignatureProto;
+using InstructionProto = note::InstructionProto;
+using AttrValueProto = note::AttrValueProto;
+using ProtoMapType = note::ProtoMapType;
 
-#undef PASSDEF_ALL
-#define PASSDEF_ALL(__macro)      \
-  __macro(ATest)
 
-#define DECL(pass)      \
-class PASSDEF_CLASSNAME(pass);
-PASSDEF_ALL(DECL)
-#undef DECL
 
-void verify_all_passes() {
-#define VAR(pass) _##pass
-#define DECLARE(pass)                   \
-  PASSDEF_CLASSNAME(pass) VAR(pass)();
-  // Expand the pass list
-  PASSDEF_ALL(DECLARE)
-
-#undef DECLARE
-#undef VAR
-}
-
-class ATestPass : Pass {
- public:
-  ATestPass(CompilerContext *cc) : Pass(cc) {}
-  ~ATestPass() override = default; 
-  bool run(const void *fn) override {
-    bool changed = false;
-    auto* ir = static_cast<Function*>(fn);
-    auto dead_ins = std::vector<Instruction*>();
-    for (const auto *instruction : ir->instructions()) {
-      if (instruction->ctrl_predecessors().empty() &&
-          instruction->ctrl_successors().empty()   &&
-          instruction->opcode() != OpCode.kParameter)
-        dead_ins.push_back(instruction);
-    }
-    // (TODO) remove dead instructions from function
-    changed = !dead_ins.empty();
-    return changed;
-  }
-  std::string name() const override {
-    return "a_test_pass";
-  }
-};
 
 class BTestPass : Pass {
  public:
   BTestPass(CompilerContext *cc) : Pass(cc) {}
   ~BTestPass() override = default; 
-  bool run(const void *ir) override {
+  bool run(void *fn) override {
     bool changed = false;
-    auto* ir = static_cast<Function*>(ir);
+    auto* ir = static_cast<Function*>(fn);
     auto dead_ins = std::vector<Instruction*>();
-    for (const auto *instruction : ir->instructions()) {
+    for (auto *instruction : ir->instructions()) {
       if (instruction->ctrl_predecessors().empty() &&
           instruction->ctrl_successors().empty()   &&
-          instruction->opcode() != OpCode.kParameter)
+          instruction->opcode() != OpCode::kParameter)
         dead_ins.push_back(instruction);
     }
     // (TODO) remove dead instructions from function
@@ -197,8 +164,8 @@ TEST_F(PassClassTest, VerifyPasses) {
 TEST_F(PassClassTest, SimpleFunctionPass) {
   std::unordered_map<std::int64_t, Function*> func_index;
   Function func(func_proto_, func_index);
-  auto* a_pass = make_pass(ATest, nullptr);
-  EXPECT_EQ(a_pass(&func, nullptr), false);
+  auto* a_pass = make_pass(ATest, nullptr);  
+  EXPECT_EQ(a_pass->run(&func), true);
   LOG(INFO) << "A simple function pass detecting dead instructions.";
 }
 

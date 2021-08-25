@@ -13,15 +13,22 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #include "paddle/fluid/compiler/piano/pass.h"
+#include "paddle/fluid/compiler/piano/note/instruction.h"
+#include "paddle/fluid/compiler/piano/note/function.h"
 
 namespace paddle {
 namespace piano {
 
+using Function = note::Function;
+using Instruction = note::Instruction;
+using OpCode = note::OpCode;
+
+// An example pass class
 class ExpandBatchNormPass : Pass {
  public:
   ExpandBatchNormPass(CompilerContext *cc) : Pass(cc) {}
   ~ExpandBatchNormPass() override = default; 
-  bool run(const void *ir) override {
+  bool run(void *ir) override {
     bool changed = false;
 
     return changed;
@@ -30,6 +37,7 @@ class ExpandBatchNormPass : Pass {
     return "expand_batchnorm_pass";
   }
 };
+
 
 void verify_all_passes() {
 #define VAR(pass) _##pass
