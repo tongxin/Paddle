@@ -154,9 +154,9 @@ class PassClassTest : public ::testing::Test {
 };
 
 TEST_F(PassClassTest, VerifyPasses) {
-  verify_all_passes();
+  int num_passes = verify_all_passes();
   // Control reaches here if compilation succeeds 
-  EXPECT_TRUE(true);
+  EXPECT_EQ(num_passes, Total_Num_Passes);
 }
 
 TEST_F(PassClassTest, SimpleFunctionPass) {

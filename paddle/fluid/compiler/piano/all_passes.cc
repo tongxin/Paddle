@@ -14,18 +14,24 @@ limitations under the License. */
 
 #include "paddle/fluid/compiler/piano/pass.h"
 #include "paddle/fluid/compiler/piano/all_passes.h"
+#include "glog/logging.h"
 
 namespace paddle {
 namespace piano {
 
-void verify_all_passes() {
+int verify_all_passes() {
+  int count = 0;
 #define VAR(pass) _##pass
-#define DECLARE(pass)             \
-  auto VAR(pass) = PASS_CTOR(pass);
-  // Expand the pass list
-  PASSDEF_ALL(DECLARE)
-
-#undef DECLARE
+#define CHECK_PASS(pass)                              \
+  auto VAR(pass) = PASS_CTOR(pass);                   \
+  count++;                                            \
+  LOG(INFO) << "Check pass: " << VAR(pass).name();    \
+  {
+    // Expand the pass list
+    PASS_ALL(CHECK_PASS)
+  }
+  return count;
+#undef CHECK_PASS
 #undef VAR
 }
 

@@ -52,31 +52,22 @@ class ATestPass : public Pass {
   }
 };
 
-
 // Put all the piano optimization passes here so that they can be hooked
 // with the make_pass function.
-#define PASSDEF_ALL(__macro)        \
+#define PASS_ALL(__macro)        \
   __macro(ATest)
-
-#define PASSDEF_ID(pass)        PASS_##pass
-#define PASSDEF_ID_(pass)       PASS_##pass,
-#define PASSDEF_CLASS(pass)     pass##Pass
 
 // Pass id enum is used as key for dispatching pass classes
 enum class PassId {
+#define ID(pass) pass,
   PASS_NA,
-  PASSDEF_ALL(PASSDEF_ID_)
+  PASS_ALL(ID)
+#undef ID
 };
 
 #define INC(name) +1
-  constexpr int Total_Num_Passes = PASSDEF_ALL(INC);
+  constexpr int Total_Num_Passes = PASS_ALL(INC);
 #undef INC
-
-#define DECL(pass)      \
-class PASSDEF_CLASS(pass);
-PASSDEF_ALL(DECL)
-#undef DECL
-
 
 // Following are basic utilities for constructing pass objects
 
@@ -89,13 +80,15 @@ static P *do_make_pass() {
 template<PassId T>
 struct PassClass {};
 
+#define PASS_ID(pass)        PassId::pass
+#define PASS_CLASS(pass)     pass##Pass
 
 #define SPECIALIZE_PASSCLASS(pass)                  \
 template<>                                          \
-struct PassClass<PassId::PASSDEF_ID(pass)> {        \
-  using type = PASSDEF_CLASS(pass);                 \
+struct PassClass<PASS_ID(pass)> {                   \
+  using type = PASS_CLASS(pass);                    \
 };
-PASSDEF_ALL(SPECIALIZE_PASSCLASS)
+PASS_ALL(SPECIALIZE_PASSCLASS)
 
 // Use this macro as the public interface for constructing heap allocated
 // pass object. 
@@ -105,7 +98,7 @@ PASSDEF_ALL(SPECIALIZE_PASSCLASS)
 //    dce->run(module_ir);
 // }
 #define make_pass(pass)                             \
-  do_make_pass<PassClass<PassId::PASSDEF_ID(pass)>::type>();
+  do_make_pass<PassClass<PASS_ID(pass)>::type>();
 
 // use this macro as the public interface for constructing stack allocated
 // pass object.
@@ -114,13 +107,13 @@ PASSDEF_ALL(SPECIALIZE_PASSCLASS)
 //    auto dce_pass = PASS_CTOR(ModuleDCE);
 //    dce.run(module_ir);
 // } 
-#define PASS_CTOR(pass)                             \
-  PassClass<PassId::PASSDEF_ID(pass)>::type();
+#define PASS_CTOR(pass)                            \
+  PassClass<PASS_ID(pass)>::type();
 
-void verify_all_passes();
+int verify_all_passes();
 
-#undef PASSDEF_ID_
 #undef DEF_PASS_MAKER
+#undef SPECIALIZE_PASSCLASS
 
 }
 }
