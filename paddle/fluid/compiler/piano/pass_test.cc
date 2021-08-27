@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #include "paddle/fluid/compiler/piano/pass.h"
+#include "paddle/fluid/compiler/piano/all_passes.h"
 #include "paddle/fluid/compiler/piano/note/instruction.h"
 #include "paddle/fluid/compiler/piano/note/function.h"
 #include "paddle/fluid/compiler/piano/note/note.pb.h"
@@ -31,9 +32,6 @@ using InstructionProto = note::InstructionProto;
 using AttrValueProto = note::AttrValueProto;
 using ProtoMapType = note::ProtoMapType;
 
-
-
-
 class BTestPass : Pass {
  public:
   BTestPass(CompilerContext *cc) : Pass(cc) {}
@@ -42,11 +40,11 @@ class BTestPass : Pass {
     bool changed = false;
     auto* ir = static_cast<Function*>(fn);
     auto dead_ins = std::vector<Instruction*>();
-    for (auto *instruction : ir->instructions()) {
-      if (instruction->ctrl_predecessors().empty() &&
-          instruction->ctrl_successors().empty()   &&
-          instruction->opcode() != OpCode::kParameter)
-        dead_ins.push_back(instruction);
+    for (auto& instruction : ir->instructions()) {
+      if (instruction.ctrl_predecessors().empty() &&
+          instruction.ctrl_successors().empty()   &&
+          instruction.opcode() != OpCode::kParameter)
+        dead_ins.push_back(&instruction);
     }
     // (TODO) remove dead instructions from function
     changed = !dead_ins.empty();
@@ -74,7 +72,7 @@ class PassClassTest : public ::testing::Test {
     instr1_proto_.set_name("arg1.1");
     instr1_proto_.set_opcode(GetOpName(OpCode::kParameter));
     instr1_proto_.set_id(1);
-    instr1_proto_.set_parameter_number(0);
+    instr1_proto_.set_parameter_index(0);
     *instr1_proto_.mutable_shape() = arg1_shape.ToProto();
     auto* attrs1_map = instr1_proto_.mutable_attrs();
     AttrValueProto val1_proto;
@@ -97,7 +95,7 @@ class PassClassTest : public ::testing::Test {
     instr2_proto_.set_name("arg2.2");
     instr2_proto_.set_opcode(GetOpName(OpCode::kParameter));
     instr2_proto_.set_id(2);
-    instr2_proto_.set_parameter_number(0);
+    instr2_proto_.set_parameter_index(1);
     *instr2_proto_.mutable_shape() = arg2_shape.ToProto();
     auto* attrs2_map = instr2_proto_.mutable_attrs();
     AttrValueProto val2_proto;
@@ -120,7 +118,6 @@ class PassClassTest : public ::testing::Test {
     instr3_proto_.set_name("add.3");
     instr3_proto_.set_opcode(GetOpName(OpCode::kAdd));
     instr3_proto_.set_id(3);
-    instr3_proto_.set_parameter_number(2);
     *instr3_proto_.mutable_shape() = result_shape.ToProto();
     instr3_proto_.add_operand_ids(1);
     instr3_proto_.add_operand_ids(2);
@@ -144,6 +141,7 @@ class PassClassTest : public ::testing::Test {
     *func_proto_.add_instructions() = instr1_proto_;
     *func_proto_.add_instructions() = instr2_proto_;
     *func_proto_.add_instructions() = instr3_proto_;
+
   }
  protected:
   std::string func_name_{"union_12510013719728903619"};
@@ -164,9 +162,13 @@ TEST_F(PassClassTest, VerifyPasses) {
 TEST_F(PassClassTest, SimpleFunctionPass) {
   std::unordered_map<std::int64_t, Function*> func_index;
   Function func(func_proto_, func_index);
-  auto* a_pass = make_pass(ATest, nullptr);  
+  auto* a_pass = make_pass(ATest, nullptr);
   EXPECT_EQ(a_pass->run(&func), true);
   LOG(INFO) << "A simple function pass detecting dead instructions.";
+
+  // size_t s = sizeof make_pass(BTest, nullptr);
+  // EXPECT_EQ(s, 0);
+  // LOG(INFO) << "The attempt to make_pass a non-registered pass is caught.";
 }
 
 
