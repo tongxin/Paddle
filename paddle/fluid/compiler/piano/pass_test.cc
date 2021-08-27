@@ -34,7 +34,7 @@ using ProtoMapType = note::ProtoMapType;
 
 class BTestPass : Pass {
  public:
-  BTestPass(CompilerContext *cc) : Pass(cc) {}
+  BTestPass() : Pass() {}
   ~BTestPass() override = default; 
   bool run(void *fn) override {
     bool changed = false;
@@ -162,13 +162,10 @@ TEST_F(PassClassTest, VerifyPasses) {
 TEST_F(PassClassTest, SimpleFunctionPass) {
   std::unordered_map<std::int64_t, Function*> func_index;
   Function func(func_proto_, func_index);
-  auto* a_pass = make_pass(ATest, nullptr);
+  auto* a_pass = make_pass(ATest);
   EXPECT_EQ(a_pass->run(&func), true);
   LOG(INFO) << "A simple function pass detecting dead instructions.";
 
-  // size_t s = sizeof make_pass(BTest, nullptr);
-  // EXPECT_EQ(s, 0);
-  // LOG(INFO) << "The attempt to make_pass a non-registered pass is caught.";
 }
 
 

@@ -15,8 +15,6 @@ limitations under the License. */
 #pragma once
 
 #include "paddle/fluid/compiler/piano/pass.h"
-#include "paddle/fluid/compiler/piano/arena.h"
-#include "paddle/fluid/compiler/piano/compiler-thread.h"
 #include "paddle/fluid/compiler/piano/note/instruction.h"
 #include "paddle/fluid/compiler/piano/note/function.h"
 #include "paddle/fluid/compiler/piano/note/note.pb.h"
@@ -33,7 +31,7 @@ class ATestPass : public Pass {
   using Instruction = note::Instruction;
   using OpCode = note::OpCode;
  public:
-  ATestPass(CompilerContext *cc) : Pass(cc) {}
+  ATestPass() : Pass() {}
   ~ATestPass() override = default; 
   bool run(void *fn) override {
     bool changed = false;
@@ -54,32 +52,15 @@ class ATestPass : public Pass {
   }
 };
 
-class ExpandBatchNormPass : Pass {
-  using Function = note::Function;
-  using Instruction = note::Instruction;
-  using OpCode = note::OpCode;
- public:
-  ExpandBatchNormPass(CompilerContext *cc) : Pass(cc) {}
-  ~ExpandBatchNormPass() override = default; 
-  bool run(void *ir) override {
-    bool changed = false;
 
-    return changed;
-  }
-  std::string name() const override {
-    return "expand_batchnorm_pass";
-  }
-};
-
-// All PIANO optimization passes must be present here.
-// Use make_pass(pass_id, CompilerContext*) to create a concrete pass object. 
-#define PASSDEF_ALL(__macro)    \
-  __macro(ExpandBatchNorm)      \
+// Put all the piano optimization passes here so that they can be hooked
+// with the make_pass function.
+#define PASSDEF_ALL(__macro)        \
   __macro(ATest)
 
 #define PASSDEF_ID(pass)        PASS_##pass
 #define PASSDEF_ID_(pass)       PASS_##pass,
-#define PASSDEF_CLASSNAME(pass) pass##Pass
+#define PASSDEF_CLASS(pass)     pass##Pass
 
 // Pass id enum is used as key for dispatching pass classes
 enum class PassId {
@@ -92,7 +73,7 @@ enum class PassId {
 #undef INC
 
 #define DECL(pass)      \
-class PASSDEF_CLASSNAME(pass);
+class PASSDEF_CLASS(pass);
 PASSDEF_ALL(DECL)
 #undef DECL
 
@@ -100,12 +81,9 @@ PASSDEF_ALL(DECL)
 // Following are basic utilities for constructing pass objects
 
 template<typename P>
-static P *do_make_pass(CompilerContext *cc) {  
+static P *do_make_pass() { 
   static_assert(std::is_base_of<Pass, P>::value);
-  if (!cc)
-    return new P(cc);
-  char *p = (*cc->arena()).allocate(1, sizeof(P));
-  return new(p) P(cc);
+  return new P();
 }
 
 template<PassId T>
@@ -115,12 +93,29 @@ struct PassClass {};
 #define SPECIALIZE_PASSCLASS(pass)                  \
 template<>                                          \
 struct PassClass<PassId::PASSDEF_ID(pass)> {        \
-  using type = PASSDEF_CLASSNAME(pass);             \
+  using type = PASSDEF_CLASS(pass);                 \
 };
 PASSDEF_ALL(SPECIALIZE_PASSCLASS)
 
-#define make_pass(pass, cc)                         \
-  do_make_pass<PassClass<PassId::PASSDEF_ID(pass)>::type>(cc);
+// Use this macro as the public interface for constructing heap allocated
+// pass object. 
+// Code example:
+// {
+//    auto* dce_pass = make_pass(ModuleDCE);
+//    dce->run(module_ir);
+// }
+#define make_pass(pass)                             \
+  do_make_pass<PassClass<PassId::PASSDEF_ID(pass)>::type>();
+
+// use this macro as the public interface for constructing stack allocated
+// pass object.
+// Code example:
+// {
+//    auto dce_pass = PASS_CTOR(ModuleDCE);
+//    dce.run(module_ir);
+// } 
+#define PASS_CTOR(pass)                             \
+  PassClass<PassId::PASSDEF_ID(pass)>::type();
 
 void verify_all_passes();
 

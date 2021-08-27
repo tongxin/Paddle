@@ -13,22 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License. */
 
 #pragma once
-#include "paddle/fluid/compiler/piano/compiler-thread.h"
-#include <functional>
-#include <memory>
 #include <string>
 
 namespace paddle {
 namespace piano {
 
-class CompilerContext;
-
 class Pass {
- private:
-  CompilerContext *cc_;
  public:
-  Pass() { cc_ = nullptr;}
-  Pass(CompilerContext *cc) : cc_(cc) {}
+  Pass() {}
   virtual ~Pass() {};
   virtual bool run(void *ir) = 0;
   virtual std::string name() const = 0;

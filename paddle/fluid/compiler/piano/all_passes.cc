@@ -20,10 +20,11 @@ namespace piano {
 
 void verify_all_passes() {
 #define VAR(pass) _##pass
-#define DECLARE(pass)                   \
-  PASSDEF_CLASSNAME(pass) VAR(pass)();
+#define DECLARE(pass)             \
+  auto VAR(pass) = PASS_CTOR(pass);
   // Expand the pass list
   PASSDEF_ALL(DECLARE)
+
 #undef DECLARE
 #undef VAR
 }
