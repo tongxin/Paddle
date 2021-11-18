@@ -16,12 +16,12 @@ import unittest
 
 import numpy as np
 import paddle
-from paddle.optimizer.functional import bfgs_iterates, bfgs_optimize
-from paddle.optimizer.functional.bfgs import (
+from paddle.incubate.optimizer.functional import bfgs_iterates, bfgs_minimize
+from paddle.incubate.optimizer.functional.bfgs import (
     SearchState,
     verify_symmetric_positive_definite_matrix,
     update_approx_inverse_hessian)
-from paddle.optimizer.functional.bfgs_utils import (
+from paddle.incubate.optimizer.functional.bfgs_utils import (
     vjp
 )
 
