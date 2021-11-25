@@ -54,11 +54,13 @@ def verify_symmetric_positive_definite_matrix(H):
 
 
 class BfgsResult(collections.namedtuple('BfgsResult', [
-                                            'location',
+                                            'iterations',
+                                            'x_location',
                                             'converged',
-                                            'failed',
-                                            'gradient',
-                                            'function_value',
+                                            'linesearch_failed',
+                                            'gradients',
+                                            'gradient_norms',
+                                            'function_results',
                                             'inverse_hessian',
                                             'function_evals',
                                             'gradient_evals',
@@ -66,7 +68,7 @@ class BfgsResult(collections.namedtuple('BfgsResult', [
     def __repr__(self):
         kvs = [(f, getattr(self, f)) for f in self._fields]
         width = max(len(f) for f in self._fields)
-        return '\n'.join(f'{k.rjust(width)} : {repr(v)}' for k, v in kvs)
+        return '\n'.join(f'{k.ljust(width)} \n   {repr(v.numpy() if isinstance(v, paddle.Tensor) else v)}\n' for k, v in kvs)
 
 
 class SearchState(object):
@@ -93,12 +95,13 @@ class SearchState(object):
         gk (Tensor): the ``func``'s gradients. 
         Hk (Tensor): the approximated inverse hessian of ``func``.
     """
-    def __init__(self, bat, xk, fk, gk, Hk, ak=None, k=0, nf=1, ng=1):
+    def __init__(self, bat, xk, fk, gk, Hk, gnorm, ak=None, k=0, nf=1, ng=1):
         self.bat = bat
         self.xk = xk
         self.fk = fk
         self.gk = gk
         self.Hk = Hk
+        self.gnorm = gnorm
         self.k = k
         self.ak = ak
         self.nf = nf
@@ -109,13 +112,21 @@ class SearchState(object):
         self.Ck = make_const(fk, 0)
         self.params = None
 
+    def reset_grads(self):
+        for field_name in dir(self):
+            field = getattr(self, field_name)
+            if isinstance(field, paddle.Tensor):
+                field.stop_gradient = True        
+
     def result(self):
         kw = {
-            'location' : self.xk,
+            'iterations': self.k,
+            'x_location' : self.xk,
             'converged' : converged_state(self.state),
-            'failed' : failed_state(self.state),
-            'gradient' : self.gk,
-            'function_value' : self.fk,
+            'linesearch_failed' : failed_state(self.state),
+            'gradients' : self.gk,
+            'gradient_norms': self.gnorm,
+            'function_results' : self.fk,
             'inverse_hessian' : self.Hk,
             'function_evals' : self.nf,
             'gradient_evals' : self.ng,
@@ -151,40 +162,41 @@ def update_approx_inverse_hessian(state, H, s, y, enforce_curvature=False):
     # batch = len(s.shape) > 1
     bat = state.bat
     
-    rho =  1. / einsum('...i, ...i', s, y) if bat else 1. / paddle.dot(s, y)
-    rho = ternary(paddle.isinf(rho), paddle.zeros_like(rho), rho)
+    with paddle.no_grad():
+        rho =  1. / einsum('...i, ...i', s, y) if bat else 1. / paddle.dot(s, y)
+        rho = ternary(paddle.isinf(rho), paddle.zeros_like(rho), rho)
 
-    # Enforces the curvature condition before updating the inverse Hessian.
-    if enforce_curvature:
-        assert not any_active_with_predicates(rho <= 0)
-    else:
-        update_state(state.state, rho <= 0, 'failed')
+        # Enforces the curvature condition before updating the inverse Hessian.
+        if enforce_curvature:
+            assert not any_active_with_predicates(rho <= 0)
+        else:
+            update_state(state.state, rho <= 0, 'failed')
 
-    # By expanding the updating formula we obtain a sum of tensor products
-    #
-    #      H_k+1 = H_k 
-    #              - rho * H_k * y_k * T(s_k)    ----- (2)
-    #              - rho * s_k * T(y_k) * H_k    ----- (3)
-    #              + rho * s_k * T(s_k)                            ----- (4)
-    #              + rho * rho * (T(y_k) * H_k * y_k) s_k * T(s_k) ----- (5)
-    #
-    # Since H_k is symmetric, (3) is (2)'s transpose.
-    # H_k * y_k
-    Hy = einsum('...ij, ...j', H, y)
-    # T(y_k) * H_y * y_k
-    yHy = einsum('...i, ...i', y, Hy) if bat else dot(y, Hy)
-    term23 = einsum('...i, ...j -> ...ji', Hy, s) + einsum('...i, ...j', Hy, s)
-    # T(s_k) * s_k
-    sTs = einsum('...i, ...j', s, s)
+        # By expanding the updating formula we obtain a sum of tensor products
+        #
+        #      H_k+1 = H_k 
+        #              - rho * H_k * y_k * T(s_k)    ----- (2)
+        #              - rho * s_k * T(y_k) * H_k    ----- (3)
+        #              + rho * s_k * T(s_k)                            ----- (4)
+        #              + rho * rho * (T(y_k) * H_k * y_k) s_k * T(s_k) ----- (5)
+        #
+        # Since H_k is symmetric, (3) is (2)'s transpose.
+        # H_k * y_k
+        Hy = einsum('...ij, ...j', H, y)
+        # T(y_k) * H_y * y_k
+        yHy = einsum('...i, ...i', y, Hy) if bat else dot(y, Hy)
+        term23 = einsum('...i, ...j -> ...ji', Hy, s) + einsum('...i, ...j', Hy, s)
+        # T(s_k) * s_k
+        sTs = einsum('...i, ...j', s, s)
 
-    if bat:
-        term45 = einsum('...ij, ...', sTs, 1 + rho * yHy)
-        Hk_next = H + einsum('...ij, ...', term45 - term23, rho)
-    else:
-        term45 = sTs * (1 + rho * yHy)
-        Hk_next = H + (term45 - term23) * rho
+        if bat:
+            term45 = einsum('...ij, ...', sTs, 1 + rho * yHy)
+            Hk_next = H + einsum('...ij, ...', term45 - term23, rho)
+        else:
+            term45 = sTs * (1 + rho * yHy)
+            Hk_next = H + (term45 - term23) * rho
 
-    return Hk_next
+        return Hk_next
 
 
 def iterates(func,
@@ -256,10 +268,7 @@ def iterates(func,
     # Puts the starting points in the initial state and kicks off the
     # minimization process.
     gnorm = vnorm_inf(g0)
-    state = SearchState(bat, x0, f0, g0, H0)
-
-    # Calculates the gradient norms
-    gnorm = vnorm_inf(state.gk)
+    state = SearchState(bat, x0, f0, g0, H0, gnorm)
 
     # Updates the state tensor on the newly converged elements.
     state.state = update_state(state.state, gnorm < gtol, 'converged')
@@ -271,7 +280,7 @@ def iterates(func,
 
         while any_active(state.state):
             k, xk, fk, gk, Hk = state.k, state.xk, state.fk, state.gk, state.Hk
- 
+
             # The negative product of inverse Hessian and gradients - H_k * g_k
             # is used as the line search direction. 
             state.pk = pk = -einsum('...ij, ...j', Hk, gk)
@@ -289,6 +298,7 @@ def iterates(func,
             else:
                 next_xk = xk + state.ak * pk
             # Calculates displacement s_k = x_k+1 - x_k
+            
             sk = next_xk - xk
 
             # Obtains the function values and gradients at x_k+1
@@ -299,6 +309,9 @@ def iterates(func,
     
             # Updates the approximate inverse hessian
             next_Hk = update_approx_inverse_hessian(state, Hk, sk, yk)
+            
+            # Calculates the gradient norms
+            next_gnorm = vnorm_inf(next_gk)
 
             # Finally transitions to the next state
             p = active_state(state.state)
@@ -306,13 +319,14 @@ def iterates(func,
             state.fk = ternary(p, next_fk, fk)
             state.gk = ternary(p, next_gk, gk)
             state.Hk = ternary(p, next_Hk, Hk)
-            state.k = k + 1
-
-            # Calculates the gradient norms
-            gnorm = vnorm_inf(next_gk)
+            state.gnorm = ternary(p, next_gnorm, state.gnorm)
 
             # Updates the state on the newly converged elements.
             state.state = update_state(state.state, gnorm < gtol, 'converged')
+
+            state.reset_grads()
+
+            state.k = k + 1
 
             # Counts iterations
             iter_count.increment()
@@ -324,7 +338,7 @@ def iterates(func,
         return
 
 
-def minimize(func,
+def optimize(func,
              x0,
              dtype='float32',
              H0=None,
@@ -372,12 +386,18 @@ def minimize(func,
         results (list[BfgsResult]): the results of all steps if `summary_only`
             is set False.
     """
-    states = list(iterates(func, x0, dtype, H0, gtol, xtol, iters, ls_iters))
-
-    if len(states) == 0:
-        return None if summary_only else []
+    states = []
+    final_state = None
+    for state in iterates(func, x0, dtype, H0, gtol, xtol, iters, ls_iters):
+        if summary_only:
+            final_state = state
+        else:
+            states.append(state)
 
     if summary_only:
-        return states[-1].result()
+        if final_state:
+            return final_state.result()
+        else:
+            return {}
 
     return [s.result() for s in states]

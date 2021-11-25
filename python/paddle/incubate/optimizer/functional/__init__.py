@@ -13,6 +13,6 @@
 # limitations under the License.
 
 from .bfgs import iterates as bfgs_iterates # noqa: F401
-from .bfgs import optimize as bfgs_minimize # noqa: F401
+from .bfgs import optimize as bfgs_optimize # noqa: F401
 
-__all__ = ['bfgs_iterates', 'bfgs_minimize']
+__all__ = ['bfgs_iterates', 'bfgs_optimize']
