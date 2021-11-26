@@ -14,7 +14,7 @@
 
 import numpy as np
 import paddle
-from ...autograd import vjp as _vjp
+from paddle.autograd.functional import vjp as _vjp
 
 
 def ternary(cond, x, y):

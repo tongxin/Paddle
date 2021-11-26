@@ -338,7 +338,7 @@ def iterates(func,
         return
 
 
-def optimize(func,
+def minimize(func,
              x0,
              dtype='float32',
              H0=None,

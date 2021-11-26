@@ -22,7 +22,7 @@ from paddle.incubate.optimizer.functional.bfgs import (
     verify_symmetric_positive_definite_matrix,
     update_approx_inverse_hessian)
 from paddle.incubate.optimizer.functional.bfgs_utils import (
-    vjp
+    vjp, vnorm_inf
 )
 
 import tensorflow as tf
@@ -137,7 +137,8 @@ class TestBFGS(unittest.TestCase):
             hess = hesfn_gen(f)(x0)
             h0 = paddle.inverse(hess)
             f0, g0 = vjp(f, x0)
-            state = SearchState(bat, x0, f0, g0, h0)
+            gnorm = vnorm_inf(f0)
+            state = SearchState(bat, x0, f0, g0, h0, gnorm)
             
             # Verifies the estimated invese Hessian at the center equals the 
             # true value. 
