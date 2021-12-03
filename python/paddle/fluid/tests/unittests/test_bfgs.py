@@ -68,26 +68,38 @@ def hesfn_gen(f):
     
     return hess
 
+def verify_symmetric(H):
+    perm = list(range(len(H.shape)))
+    perm[-2:] = perm[-1], perm[-2]
+    # batch_deltas = paddle.norm(H - H.transpose(perm), axis=perm[-2:])
+    # is_symmetic = paddle.sum(batch_deltas) == 0.0
+    assert paddle.allclose(H, H.transpose(perm)), (
+        f"(Batched) matrix {H} is not symmetric."
+    )
 
-# @paddle.no_grad()
-# def update_inv_hessian_proper(bat, H, s, y):
-#     dtype = H.dtype
-#     dim = s.shape[-1]
-#     if bat:
-#         rho = 1. / paddle.einsum('...i, ...i', s, y)
-#     else:
-#         rho = 1. / paddle.dot(s, y)
-#     rho = rho.unsqueeze(-1).unsqueeze(-1) if bat else rho.unsqueeze(-1)
-#     I = paddle.eye(dim, dtype=dtype)
-#     l = I - paddle.einsum('...ij,...i,...j->...ij', rho, s, y)
-#     r = I - paddle.einsum('...ij,...i,...j->...ij', rho, y, s)
-#     lH = paddle.matmul(l, H)
-#     lHr = paddle.matmul(lH, r)
+@paddle.no_grad()
+def update_inv_hessian_strict(bat, H, s, y):
+    dtype = H.dtype
+    dim = s.shape[-1]
+    if bat:
+        rho = 1. / paddle.einsum('...i, ...i', s, y)
+    else:
+        rho = 1. / paddle.dot(s, y)
+    rho = rho.unsqueeze(-1).unsqueeze(-1) if bat else rho.unsqueeze(-1)
+    I = paddle.eye(dim, dtype=dtype)
+    sy = paddle.einsum('...ij,...i,...j->...ij', rho, s, y)
+    l = I - sy
+    L = paddle.cholesky(H)
+    lL = paddle.matmul(l, L)
+    Lr = paddle.einsum('...ij->...ji', lL)
+    lHr = paddle.matmul(lL, Lr)
+    verify_symmetric(lHr)
+    rsTs = paddle.einsum('...ij,...i,...j->...ij', rho, s, s)
+
+    H_next = lHr + rsTs
+    verify_symmetric_positive_definite_matrix(H_next)
     
-#     rsTs = paddle.einsum('...ij,...i,...j->...ij', rho, s, s)
-#     H_next = lHr + rsTs
-    
-#     return H_next
+    return H_next
 
 def quadratic_gen(shape, dtype):
     center = paddle.rand(shape, dtype=dtype)
@@ -100,7 +112,7 @@ def quadratic_gen(shape, dtype):
         verify_symmetric_positive_definite_matrix(hessian)
     else:
         hessian = paddle.abs(hessian)
-        f = lambda x: paddle.matmul(x - center, hessian) * (x - center)
+        f = lambda x: paddle.sum((x - center) * hessian.squeeze(-1) * (x - center), axis=-1)
         return f, center
 
     def f(x):
@@ -111,7 +123,11 @@ def quadratic_gen(shape, dtype):
         #                   hessian,
         #                   x - center)
         leftprod = paddle.matmul(hessian, (x - center).unsqueeze(-1))
-        y = paddle.matmul((x - center).unsqueeze(-2), leftprod).squeeze(-1)
+        y = paddle.matmul((x - center).unsqueeze(-2), leftprod)
+        if len(shape) > 1:
+            y = y.reshape(shape[:-1])
+        else:
+            y = y.reshape([1])
         return y
     
     return f, center
@@ -124,7 +140,7 @@ class TestBFGS(unittest.TestCase):
     def gen_configs(self):
         dtypes = ['float32', 'float64']
         shapes = {
-            '1d2v': [2],
+            # '1d2v': [2],
             '2d2v': [2, 2],
             '1d50v': [50],
             '10d10v': [10, 10],
@@ -140,7 +156,6 @@ class TestBFGS(unittest.TestCase):
         paddle.seed(1234)
         for shape, dtype in self.gen_configs():
             bat = len(shape) > 1
-            print(f'shape = {shape}  bat = {bat}')
             # only supports shapes with up to 2 dims.
             f, center = quadratic_gen(shape, dtype)
             # x0 = paddle.ones(shape, dtype=dtype)
@@ -149,9 +164,10 @@ class TestBFGS(unittest.TestCase):
             # The true inverse hessian value at x0
             hess = hesfn_gen(f)(x0)
             verify_symmetric_positive_definite_matrix(hess)
-            print(f'hess : {hess}')
-            h0 = paddle.inverse(hess)
-            print(f'hess_inv : {h0}')
+            hess_np = hess.numpy()
+            hess_np_inv = np.linalg.inv(hess_np)
+            h0 = paddle.to_tensor(hess_np_inv)
+
             verify_symmetric_positive_definite_matrix(h0)
             f0, g0 = vjp(f, x0)
             gnorm = vnorm_inf(f0)
@@ -165,18 +181,23 @@ class TestBFGS(unittest.TestCase):
                 y = g1 - g0
                 
                 h1 = update_approx_inverse_hessian(state, h0, s, y)
+                h1_strict = update_inv_hessian_strict(bat, h0, s, y)
                 verify_symmetric_positive_definite_matrix(h1)
+                verify_symmetric_positive_definite_matrix(h1_strict)
 
                 self.assertTrue(True)
 
-    # def test_quadratic(self):
-    #     paddle.seed(12345)
-    #     for shape, dtype in self.gen_configs():
-    #         f, center = quadratic_gen(shape, dtype)
-    #         x0 = paddle.ones(shape, dtype=dtype)
-    #         result = bfgs_optimize(f, x0, dtype=dtype, iters=100, ls_iters=100)
-    #         self.assertTrue(paddle.all(result.converged))
-    #         self.assertTrue(paddle.allclose(result.location, center))
+    def test_quadratic(self):
+        paddle.seed(12345)
+        for shape, dtype in self.gen_configs():
+            f, center = quadratic_gen(shape, dtype)
+            print(f'center {center}')
+            print(f'f {f(center)}')
+            x0 = paddle.ones(shape, dtype=dtype)
+            result = bfgs_minimize(f, x0, dtype=dtype, iters=100, ls_iters=100)
+            print(result)
+            self.assertTrue(paddle.all(result.converged))
+            self.assertTrue(paddle.allclose(result.x_location, center))
 
 
 # shape = [2]
@@ -234,7 +255,7 @@ class TestBFGS(unittest.TestCase):
 
 # h1_pp = update_approx_inverse_hessian(state, h0_pp, s_pp, y_pp)
 
-# h1_pp_proper = update_inv_hessian_proper(h0_pp, s_pp, y_pp)
+# h1_pp_proper = update_inv_hessian_strict(h0_pp, s_pp, y_pp)
 
 if __name__ == "__main__":
     unittest.main()

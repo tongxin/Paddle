@@ -45,10 +45,11 @@ def verify_symmetric_positive_definite_matrix(H):
 
     perm = list(range(len(H.shape)))
     perm[-2:] = perm[-1], perm[-2]
-    batch_deltas = paddle.norm(H - H.transpose(perm), axis=perm[-2:])
-    is_symmetic = paddle.sum(batch_deltas) == 0.0
-    
-    assert is_symmetic, (
+    # batch_deltas = paddle.norm(H - H.transpose(perm), axis=perm[-2:])
+    # is_symmetic = paddle.sum(batch_deltas) == 0.0
+    is_symmetric = paddle.allclose(H, H.transpose(perm))
+
+    assert is_symmetric, (
         f"(Batched) matrix {H} is not symmetric."
     )
 
@@ -182,19 +183,35 @@ def update_approx_inverse_hessian(state, H, s, y, enforce_curvature=False):
         #
         # Since H_k is symmetric, (3) is (2)'s transpose.
         # H_k * y_k
-        Hy = einsum('...ij, ...j', H, y)
-        # T(y_k) * H_y * y_k
-        yHy = einsum('...i, ...i', y, Hy) if bat else dot(y, Hy)
-        term23 = einsum('...i, ...j -> ...ji', Hy, s) + einsum('...i, ...j', Hy, s)
-        # T(s_k) * s_k
-        sTs = einsum('...i, ...j', s, s)
+        L = paddle.cholesky(H)
+        yL = einsum('...i, ...ij', y, L)
+        
+        yLL = einsum('...j, ...ij', yL, L)
 
-        if bat:
-            term45 = einsum('...ij, ...', sTs, 1 + rho * yHy)
-            Hk_next = H + einsum('...ij, ...', term45 - term23, rho)
-        else:
-            term45 = sTs * (1 + rho * yHy)
-            Hk_next = H + (term45 - term23) * rho
+        yLLy = einsum('...i, ...i', yL, yL) if bat else paddle.dot(yL, yL)
+
+        ss = einsum('...i, ...j', s, s)
+
+        syLL = einsum('...i, ...j', s, yLL)
+
+        t = einsum('..., ...ij', 1. + rho * yLLy, ss) if bat else (1. + rho * yLLy) * ss
+        t1 = t - syLL - einsum('...ij->...ji', syLL)
+        Hk_next = H + einsum('..., ...ij', rho, t1) if bat else H + rho * t1
+
+        # Hy = einsum('...ij, ...j', H, y)
+        # # T(y_k) * H_y * y_k
+        # yHy = einsum('...i, ...i', y, Hy) if bat else dot(y, Hy)
+        # syH = einsum('...i, ...j -> ...ji', Hy, s)
+        # term23 = syH + einsum('...ij->...ji', syH)
+        # # T(s_k) * s_k
+        # sTs = einsum('...i, ...j', s, s)
+
+        # if bat:
+        #     term45 = einsum('...ij, ...', sTs, 1 + rho * yHy)
+        #     Hk_next = H + einsum('...ij, ...', term45 - term23, rho)
+        # else:
+        #     term45 = sTs * (1 + rho * yHy)
+        #     Hk_next = H + (term45 - term23) * rho
 
         return Hk_next
 
@@ -322,8 +339,7 @@ def iterates(func,
             state.gnorm = ternary(p, next_gnorm, state.gnorm)
 
             # Updates the state on the newly converged elements.
-            state.state = update_state(state.state, gnorm < gtol, 'converged')
-
+            state.state = update_state(state.state, state.gnorm < gtol, 'converged')
             state.reset_grads()
 
             state.k = k + 1
