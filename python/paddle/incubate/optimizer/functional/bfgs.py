@@ -347,9 +347,23 @@ def minimize(func,
              iters=50,
              ls_iters=50,
              summary_only=True):
-    r"""minimizes a differentiable function `func` using the BFGS method,
-    returning the final result for summary or the list of results including
-    all the intermediates.
+    r"""Minimizes a differentiable function `func` using the BFGS method.
+
+    The BFGS is a quasi-Newton method for solving an unconstrained
+    optimization problem over a differentiable function.
+
+    Closely related is the Newton method for minimization. Consider the iterate 
+    update formula
+
+    .. math::
+
+        x_{k+1} = x_{k} + H^{-1} \nabla{f},
+
+    If $H$ is the Hessian of $f$ at $x_{k}$, then it's the Newton method.
+    If $H$ is positive definite, used as an approximation of the Hessian, then 
+    it's a quasi-Newton. In practice, the approximated Hessians are obtained
+    by only using the gradients, over either whole or part of the search 
+    history.
 
     Reference:
         Jorge Nocedal, Stephen J. Wright, Numerical Optimization,
