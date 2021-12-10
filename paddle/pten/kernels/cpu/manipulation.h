@@ -15,6 +15,8 @@ limitations under the License. */
 #pragma once
 
 #include "paddle/pten/core/dense_tensor.h"
+#include "paddle/pten/core/kernel_registry.h"
+
 // See Note [ Why still include the fluid headers? ]
 #include "paddle/fluid/platform/device_context.h"
 
@@ -28,6 +30,13 @@ void Flatten(const CPUContext& dev_ctx,
              int start_axis,
              int stop_axis,
              DenseTensor* out);
+
+template <typename T>
+void Cast(const CPUContext& dev_ctx,
+          const DenseTensor& x,
+          DataType out_dtype,
+          DataType in_dtype,
+          DenseTensor* out);
 
 void ReshapeFromDT(const CPUContext& dev_ctx,
                    const DenseTensor& x,
