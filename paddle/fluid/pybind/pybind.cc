@@ -164,6 +164,7 @@ PyTypeObject *g_cpuplace_pytype = nullptr;
 PyTypeObject *g_xpuplace_pytype = nullptr;
 PyTypeObject *g_npuplace_pytype = nullptr;
 PyTypeObject *g_cudapinnedplace_pytype = nullptr;
+PyTypeObject *g_framework_tensor_pytype = nullptr;
 
 bool IsCompiledWithCUDA() {
 #if !defined(PADDLE_WITH_CUDA) && !defined(PADDLE_WITH_HIP)
@@ -579,6 +580,14 @@ PYBIND11_MODULE(core_noavx, m) {
 
   m.def("disable_signal_handler", &DisableSignalHandler);
 
+  m.def("clear_gradients",
+        [](std::vector<std::shared_ptr<imperative::VarBase>> param_list,
+           bool set_to_zero) {
+          for (auto param : param_list) {
+            param->ClearGradient(set_to_zero);
+          }
+        });
+
 #if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
   m.def("cudnn_version", &platform::DnnVersion);
   m.def("gpu_memory_available", []() {
@@ -725,7 +734,11 @@ PYBIND11_MODULE(core_noavx, m) {
 
   BindImperative(&m);
 
-  py::class_<framework::Tensor>(m, "Tensor", py::buffer_protocol())
+  py::class_<framework::Tensor> framework_tensor(m, "Tensor",
+                                                 py::buffer_protocol());
+  g_framework_tensor_pytype =
+      reinterpret_cast<PyTypeObject *>(framework_tensor.ptr());
+  framework_tensor
       .def("__array__",
            [](framework::Tensor &self) { return TensorToPyArray(self); })
       .def("_is_initialized",
@@ -1435,6 +1448,18 @@ All parameter, weight, gradient are variables in Paddle.
 
            Returns:
                out (core.Variable|None): the found variable or None.
+           )DOC",
+           py::return_value_policy::reference)
+      .def("erase", &Scope::EraseVars, py::arg("names"),
+           R"DOC(
+           Find variable named :code:`name` in the current scope or
+           its parent scope. Return None if not found. 
+
+           Args:
+               name (str): the variable names to be erase.
+
+           Returns:
+               None
            )DOC",
            py::return_value_policy::reference)
       .def("new_scope", [](Scope &self) -> Scope * { return &self.NewScope(); },
