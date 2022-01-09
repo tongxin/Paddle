@@ -904,3 +904,37 @@ def vhp(func, inputs, v=None, create_graph=False, allow_unused=False):
         vhp = grad_fn(jac, xs, v)
         outputs, vhp = return_fn(outputs), return_fn(vhp)
     return outputs, vhp
+
+import paddle.static.gradients as gradients 
+class Jacobian(object):
+    r"""
+    The Jacobian matrix of muli-input multi-output function.
+
+    """
+    
+    def __init__(self, func, x):
+        self.f = func
+        self.x = x
+        self.y = func(x)
+        self.xdim = x.shape[1]
+        self.ydim = y.shape[1]
+        self.jacobian = {}
+    
+    def __getitem__(self, tup):
+        if isinstance(tup, tuple):
+            i, j = tup
+        elif isinstance(tup, int):
+            i, j = tup, None
+        else:
+            assert False, f'Invalid Jacobian index.'
+        
+        assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
+        assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
+
+        if i not in self.jacobian:
+            self.jacobian[i] = gradients(self.y[..., i], self.x)[0]
+        
+        if j is None:
+            return self.jacobian[i]
+        else:
+            return self.jacobian[i][..., j]
