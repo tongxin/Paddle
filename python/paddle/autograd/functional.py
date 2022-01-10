@@ -905,21 +905,42 @@ def vhp(func, inputs, v=None, create_graph=False, allow_unused=False):
         outputs, vhp = return_fn(outputs), return_fn(vhp)
     return outputs, vhp
 
-import paddle.static.gradients as gradients 
+from paddle.static import gradients
 class Jacobian(object):
     r"""
     The Jacobian matrix of muli-input multi-output function.
-
     """
-    
-    def __init__(self, func, x):
-        self.f = func
-        self.x = x
-        self.y = func(x)
-        self.xdim = x.shape[1]
-        self.ydim = y.shape[1]
+    def __init__(self, func, xs, batch=False):
+        r"""Requiring batch always take the 0'th axis both inputs and outputs. """
+        def enable_grads(xs):
+            if isinstance(xs, list):
+                for x in xs:
+                    x.stop_gradient = False
+            else:
+                assert isinstance(xs, paddle.fluid.framework.Variable)
+                xs.stop_gradient = False
+            return xs
+        self.batch = batch
+        self.xs = enable_grads(xs)
+        ys = func(xs)
+        if not isinstance(ys, list):
+            ys = [ys]
+        self.y = self.flatten_all(ys)
+        self.ydim = self.y.shape[-1]
+        self.xdim = self.flatten_all(xs).shape[-1]
+        self.bdim = self.y.shape[0]
         self.jacobian = {}
-    
+
+    def flatten(self, x):
+        to = [x.shape[0], -1] if self.batch else [-1]
+        return x.reshape(to)
+
+    def flatten_all(self, xs):
+        return paddle.concat([self.flatten(x) for x in xs], axis=-1)
+
+    def shape(self):
+        return (self.ydim, self.xdim)
+
     def __getitem__(self, tup):
         if isinstance(tup, tuple):
             i, j = tup
@@ -927,13 +948,10 @@ class Jacobian(object):
             i, j = tup, None
         else:
             assert False, f'Invalid Jacobian index.'
-        
-        assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
-        assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
-
+        # assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
+        # assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
         if i not in self.jacobian:
-            self.jacobian[i] = gradients(self.y[..., i], self.x)[0]
-        
+            self.jacobian[i] = self.flatten_all(gradients(self.y[..., i], self.xs))
         if j is None:
             return self.jacobian[i]
         else:
