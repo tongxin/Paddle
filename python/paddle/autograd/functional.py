@@ -905,6 +905,7 @@ def vhp(func, inputs, v=None, create_graph=False, allow_unused=False):
         outputs, vhp = return_fn(outputs), return_fn(vhp)
     return outputs, vhp
 
+
 from paddle.static import gradients
 class Jacobian(object):
     r"""
@@ -942,12 +943,11 @@ class Jacobian(object):
         return (self.ydim, self.xdim)
 
     def __getitem__(self, tup):
-        if isinstance(tup, tuple):
+        if hasattr(tup, '__iter__'):
             i, j = tup
-        elif isinstance(tup, int):
-            i, j = tup, None
         else:
-            assert False, f'Invalid Jacobian index.'
+            i, j = tup, None
+
         # assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
         # assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
         if i not in self.jacobian:

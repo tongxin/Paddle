@@ -16,7 +16,7 @@ import unittest
 import numpy as np
 import paddle
 import paddle.fluid as fluid
-# from utils import _compute_numerical_jacobian, _compute_numerical_batch_jacobian
+from utils import _compute_numerical_jacobian, _compute_numerical_batch_jacobian
 
 class TestJacobian(unittest.TestCase):
     @classmethod
@@ -44,10 +44,27 @@ class TestJacobian(unittest.TestCase):
         place = fluid.CUDAPlace(0)
         exe = fluid.Executor(place)
         exe.run(startup)
-        rows = exe.run(main, feed={'x':self.A}, fetch_list=[rows])
+        ad_jacobian = exe.run(main, feed={'x':self.A}, fetch_list=[rows])
         print(rows)
-        # JJ = _compute_numerical_jacobian(
-        #     func, self.A, self.numerical_delta, self.np_dtype)[0][0]
+        np_jacobian = _compute_numerical_jacobian(
+            func, self.A, self.numerical_delta, self.np_dtype)[0]
+        print(np_jacobian)
+
+def test_standard_tensor_function(self):
+        def func(x):
+            return paddle.matmul(x, x)
+        
+        main = fluid.Program()
+        startup = fluid.Program()
+        with fluid.program_guard(main, startup):
+            x = paddle.static.data(name='x', shape=[1, 2], dtype=self.dtype)
+            JJ = paddle.autograd.functional.Jacobian(func, x, batch=True)
+            nrow, ncol = JJ.shape()
+            rows = [JJ[i] for i in range(nrow)]
+        place = fluid.CUDAPlace(0)
+        exe = fluid.Executor(place)
+        exe.run(startup)
+        rows = exe.run(main, feed={'x':self.B}, fetch_list=[rows])
 
 if __name__ == "__main__":
     paddle.enable_static()
