@@ -949,11 +949,11 @@ class Jacobian(object):
             i, j = tup, None
 
         if isinstance(i, slice):
-            slice = True
+            slicing = True
         else:
-            slice = False
+            slicing = False
 
-        if slice:
+        if slicing:
             if 'full' not in self.jacobian:
                 rows = [self.flatten_all(gradients(self.y[..., i], self.xs)) 
                             for i in range(self.xdim)]
