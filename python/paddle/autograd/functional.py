@@ -948,11 +948,28 @@ class Jacobian(object):
         else:
             i, j = tup, None
 
+        if isinstance(i, slice):
+            slice = True
+        else:
+            slice = False
+
+        if slice:
+            if 'full' not in self.jacobian:
+                rows = [self.flatten_all(gradients(self.y[..., i], self.xs)) 
+                            for i in range(self.xdim)]
+                self.jacobian['full'] = paddle.stack(rows)
+            return self.jacobian['full'][i]
+
         # assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
         # assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
-        if i not in self.jacobian:
-            self.jacobian[i] = self.flatten_all(gradients(self.y[..., i], self.xs))
-        if j is None:
-            return self.jacobian[i]
+        if 'full' in self.jacobian:
+            JJ = self.jacobian['full']
         else:
-            return self.jacobian[i][..., j]
+            JJ = self.jacobian
+            if i not in self.jacobian:
+                self.jacobian[i] = self.flatten_all(gradients(self.y[..., i], self.xs))
+        
+        if j is None:
+            return JJ[i]
+        else:
+            return JJ[i][..., j]
