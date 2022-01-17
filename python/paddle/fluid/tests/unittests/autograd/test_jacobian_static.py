@@ -25,11 +25,15 @@ def approx_jacobian(f, xs, dtype, eps=1e-5, batch=False):
     The function input is required to be an np array or a list of list of np 
     arrays. 
     """
-    def flatten(xs):
+    def flatten(x):
+        to = [x.shape[0], -1] if batch else [-1]
+        return x.reshape(to)
+    
+    def flatten_all(xs):
         if isinstance(xs, np.ndarray):
-            flattened = xs.flatten()
+            flattened = flatten(xs)
         else:
-            flattened = np.concatenate([x.flatten() for x in xs])
+            flattened = np.concatenate([flatten(x) for x in xs], axis=-1)
         return flattened
 
     def x_like(x, orig_x):
@@ -37,28 +41,29 @@ def approx_jacobian(f, xs, dtype, eps=1e-5, batch=False):
 
     def _f(x):
         if multi_inps:
-            _xs = np.split(x, splits)
+            _xs = np.split(x, splits, axis=-1)
             _xs = [x_like(_x, _o) for _x, _o in zip(_xs, xs)]      
             outs = f(_xs)
         else:
             outs = f(x)
-        return flatten(outs)
+        return flatten_all(outs)
 
     multi_inps = False if isinstance(xs, np.ndarray) else True
-    xdim = xs.size if isinstance(xs, np.ndarray) else sum(x.size for x in xs)
+    x = flatten_all(xs)
+    xdim = x.shape[-1]
     splits = []
 
-    x = flatten(xs)
     if multi_inps:
         split = 0
         for inp in xs:
-            split += inp.size
+            split += flatten(inp).shape[-1]
             splits.append(split)
 
-    ds = eps * np.eye(xdim, dtype=dtype)
-    
-    fprimes_by_x = [0.5 * (_f(x + d) - _f(x - d)) / eps for d in ds]
-    return np.stack(fprimes_by_x).T
+    ds = eps * np.eye(xdim, dtype=dtype) 
+
+    fprimes_by_x = [(0.5/eps) * (_f(x + d) - _f(x - d)) for d in ds]
+    fprimes_by_y = np.stack(fprimes_by_x, axis=-1)
+    return np.transpose(fprimes_by_y, [1, 0, 2]) if batch else fprimes_by_y
 
 class TestJacobian(unittest.TestCase):
     @classmethod
@@ -67,47 +72,73 @@ class TestJacobian(unittest.TestCase):
         self.np_dtype = np.float32
         self.A = np.array([[1., 2.]]).astype('float32')
         self.B = np.array([[1., 2.], [2., 1.]]).astype('float32')
-        self.eps = 1e-5
+        self.C = np.array([[2., 2.], [2., 1.]]).astype('float32')
+        self.D = np.array([[[2., 2.], [2., 1.]], [[1., 2.], [2., 1.]]]).astype('float32')
+        self.E = np.array([[[3., 4.], [2., 3.]], [[2., 1.], [1., 3.]]]).astype('float32')
+        self.eps = 1e-4
         self.rtol = 1e-3
         self.atol = 1e-3
 
-    def test_standard_elementwise_function(self):
-        def func(x):
-            return paddle.multiply(x, x)
-        
+    def run_test(self, pd_f, np_f, inps, dtype, batch=False):
+        def make_tensors(inps):
+            if isinstance(inps, list):
+                xs = [paddle.static.data(f'x{i}', inp.shape, dtype=inp.dtype) 
+                            for i, inp in enumerate(inps)]
+            else:
+                xs = paddle.static.data(name='x', shape=inps.shape, dtype=inps.dtype)
+            return xs
+
         main = fluid.Program()
         startup = fluid.Program()
         with fluid.program_guard(main, startup):
-            x = paddle.static.data(name='x', shape=[1, 2], dtype=self.np_dtype)
-            JJ = paddle.autograd.functional.Jacobian(func, x, batch=False)
+            xs = make_tensors(inps)
+            JJ = paddle.autograd.functional.Jacobian(pd_f, xs, batch=batch)
             nrow, ncol = JJ.shape()
             full_jacobian = JJ[:]
         place = fluid.CUDAPlace(0)
         exe = fluid.Executor(place)
         exe.run(startup)
-        pd_jacobians = exe.run(main, feed={'x':self.A}, fetch_list=[full_jacobian])
-        print(pd_jacobians)
+        if isinstance(inps, list):
+            feeds = {f'x{i}': x for i, x in enumerate(inps)}
+        else:
+            feeds = {'x': inps}
+        pd_jacobians = exe.run(main, feed=feeds, fetch_list=[full_jacobian])[0]
+        np_jacobians = approx_jacobian(np_f, inps, dtype, self.eps, batch=batch)
+        self.assertTrue(np.allclose(pd_jacobians, np_jacobians, self.rtol, self.atol))
 
-        def np_func(x):
-            return x * x
-        np_jacobians = approx_jacobian(np_func, self.A, self.np_dtype, self.eps)
-        print(np_jacobians)
+    def test_square(self):
+        def pd_f(x):
+            return paddle.multiply(x, x)
+        def np_f(x):
+            return np.multiply(x, x)
+        self.run_test(pd_f, np_f, self.A, np.dtype('float32'))
 
-def test_standard_tensor_function(self):
-        def func(x):
-            return paddle.matmul(x, x)
-        
-        main = fluid.Program()
-        startup = fluid.Program()
-        with fluid.program_guard(main, startup):
-            x = paddle.static.data(name='x', shape=[1, 2], dtype=self.dtype)
-            JJ = paddle.autograd.functional.Jacobian(func, x, batch=True)
-            nrow, ncol = JJ.shape()
-            rows = [JJ[i] for i in range(nrow)]
-        place = fluid.CUDAPlace(0)
-        exe = fluid.Executor(place)
-        exe.run(startup)
-        rows = exe.run(main, feed={'x':self.B}, fetch_list=[rows])
+    def test_mul(self):
+        def pd_f(xs):
+            x, y = xs
+            return paddle.multiply(x, y)
+        def np_f(xs):
+            x, y = xs
+            return np.multiply(x, y)
+        self.run_test(pd_f, np_f, [self.B, self.C], np.dtype('float32'))        
+
+    def test_matmul(self):
+        def pd_f(xs):
+            x, y = xs
+            return paddle.matmul(x, y)
+        def np_f(xs):
+            x, y = xs
+            return np.matmul(x, y)
+        self.run_test(pd_f, np_f, [self.B, self.C], np.dtype('float32'))
+
+    def test_batch_matmul(self):
+        def pd_f(xs):
+            x, y = xs
+            return paddle.matmul(x, y)
+        def np_f(xs):
+            x, y = xs
+            return np.matmul(x, y)
+        self.run_test(pd_f, np_f, [self.B, self.C], np.dtype('float32'), batch=True)
 
 if __name__ == "__main__":
     unittest.main()

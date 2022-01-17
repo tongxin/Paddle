@@ -956,12 +956,12 @@ class Jacobian(object):
         if slicing:
             if 'full' not in self.jacobian:
                 rows = [self.flatten_all(gradients(self.y[..., i], self.xs)) 
-                            for i in range(self.xdim)]
+                            for i in range(self.ydim)]
                 self.jacobian['full'] = paddle.stack(rows)
             return self.jacobian['full'][i]
 
-        # assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
-        # assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
+        assert 0 <= i < self.ydim, f"Jacobian index i={i} is not valid."
+        assert (j is None) or (0 <= j < self.xdim), f"Jacobian index j={j} is not valid."
         if 'full' in self.jacobian:
             JJ = self.jacobian['full']
         else:
@@ -973,3 +973,4 @@ class Jacobian(object):
             return JJ[i]
         else:
             return JJ[i][..., j]
+
