@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 #include "paddle/fluid/imperative/jit/program_desc_tracer.h"
 
 namespace paddle {
@@ -220,17 +221,10 @@ void ProgramDescTracer::InsertVarIfNotExist(
     const std::shared_ptr<VarBase> &new_var, bool is_input) {
   PADDLE_ENFORCE_NOT_NULL(new_var, platform::errors::InvalidArgument(
                                        "The variable to insert is NULL."));
-
-  while (!vars_mutex_.try_lock()) {
-    if (vars_.count(new_var) == 0) break;
-    vars_mutex_.unlock();
-    return;
-  }
-  auto &pair = vars_[new_var];
-  vars_mutex_.unlock();
+  if (vars_.count(new_var) != 0) return;
 
   auto new_var_desc = new framework::VarDesc("");
-  pair.reset(new_var_desc);
+  vars_[new_var].reset(new_var_desc);
 
   if (new_var->Persistable() || is_input) {
     new_var_desc->SetName(new_var->Name());
@@ -261,8 +255,6 @@ void ProgramDescTracer::InsertVarIfNotExist(
         "Not support variable type %s.",
         framework::ToTypeName(inner_var.Type())));
   }
-
-  return;
 }
 
 void ProgramDescTracer::Reset() {

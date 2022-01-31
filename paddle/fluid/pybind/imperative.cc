@@ -1137,8 +1137,10 @@ void BindImperative(py::module *m_ptr) {
               {
                 // Release gil and do tracing
                 py::gil_scoped_release release;
+                VLOG(1) << "GIL release start!"
                 tracer->TraceOp("set_value", ins, outs, std::move(attrs),
                                 {{"Input", "Out"}});
+                VLOG(1) << "GIL release end!"
               }
             } else {
               auto self_numpy = TensorToPyArray(*self_tensor);
@@ -1175,6 +1177,7 @@ void BindImperative(py::module *m_ptr) {
                                 &list_select_idxs, &list_select_flag);
              // release gil and do tracing
              py::gil_scoped_release release;
+             VLOG(1) << "GIL release start!"
              const auto &tracer = imperative::GetCurrentTracer();
 
              auto out = slice_axes.empty() && !list_select_flag
@@ -1202,6 +1205,7 @@ void BindImperative(py::module *m_ptr) {
                  }
                }
                tracer->TraceOp(op_type, ins, outs, std::move(attrs));
+               VLOG(1) << "GIL release end!"
              }
              if (!none_axes.empty()) {
                // Deal with cases when all axes are decreased.
@@ -1577,7 +1581,7 @@ void BindImperative(py::module *m_ptr) {
              this interface, and prepare for the worst.
              */
              py::gil_scoped_release release;
-
+             VLOG(1) << "GIL release start!"
              if (self.HasGradVar()) {
                auto grad_var = self.GradVarBase();
                auto var_wrapper = grad_var->SharedVar();
@@ -1585,6 +1589,7 @@ void BindImperative(py::module *m_ptr) {
                  var_wrapper->ResetInplaceVersion(set_to_zero);
                }
              }
+             VLOG(1) << "GIL release end!"
            })
       .def("_grad_ivar",
            [](const imperative::VarBase &self) {
@@ -1617,6 +1622,7 @@ void BindImperative(py::module *m_ptr) {
       .def("_allreduce",
            [](imperative::VarBase &self,
               const imperative::ParallelStrategy &strategy) {
+             VLOG(1) << "GIL release start!"
              if (strategy.nranks_ > 1) {
 #if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
 #if NCCL_VERSION_CODE >= 2212
@@ -1638,6 +1644,7 @@ void BindImperative(py::module *m_ptr) {
                    "not compiled with NCCL."));
 #endif  // PADDLE_WITH_NCCL or PADDLE_WITH_RCCL
              }
+             VLOG(1) << "GIL release end!"
            },
            py::call_guard<py::gil_scoped_release>())
       .def("_register_grad_hook",
@@ -2305,9 +2312,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
+               VLOG(1) << "GIL release start!"
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward,
                             inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2320,9 +2329,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
+               VLOG(1) << "GIL release start!"
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward,
                             inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2335,9 +2346,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
+               VLOG(1) << "GIL release start!"
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward,
                             inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2350,9 +2363,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
+               VLOG(1) << "GIL release start!"
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward,
                             inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2365,9 +2380,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
+               VLOG(1) << "GIL release start!"
                self.TraceOp(type, std::move(ins_map), std::move(outs_map),
                             std::move(attrs), place, trace_backward,
                             inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            });
 
@@ -2426,11 +2443,13 @@ void BindImperative(py::module *m_ptr) {
          const std::vector<std::shared_ptr<imperative::VarBase>> &no_grad_vars,
          const platform::Place &place, bool create_graph, bool retain_graph,
          bool allow_unused, bool only_inputs) {
+        VLOG(1) << "GIL release start!"
         imperative::PartialGradEngine engine(
             input_targets, output_targets, output_grads, no_grad_vars, place,
             create_graph, retain_graph, allow_unused, only_inputs);
         engine.Execute();
         return engine.GetResult();
+        VLOG(1) << "GIL release end!"
       },
       py::call_guard<py::gil_scoped_release>());
 
@@ -2439,11 +2458,13 @@ void BindImperative(py::module *m_ptr) {
       [](const std::vector<std::shared_ptr<imperative::VarBase>> &tensors,
          const std::vector<std::shared_ptr<imperative::VarBase>> &grad_tensors,
          bool retain_graph, const imperative::Tracer &tracer) {
+        VLOG(1) << "GIL release start!"
         auto *engine = tracer.GetEngine();
         engine->Init(tensors, grad_tensors, retain_graph);
         VLOG(3) << "Start backward";
         engine->Execute();
         VLOG(3) << "Finish backward";
+        VLOG(1) << "GIL release end!"
       },
       py::call_guard<py::gil_scoped_release>());
 
