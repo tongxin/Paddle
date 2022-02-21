@@ -30,7 +30,6 @@ limitations under the License. */
 #include <vector>
 
 #include "paddle/fluid/eager/api/all.h"
-#include "paddle/fluid/framework/convert_utils.h"
 #include "paddle/fluid/framework/scope_guard.h"
 #include "paddle/fluid/imperative/all_reduce.h"
 #include "paddle/fluid/imperative/amp_auto_cast.h"
@@ -188,7 +187,7 @@ static void InitVarBaseAndTensor(
         "Place should be one of "
         "CPUPlace/XPUPlace/CUDAPlace/CUDAPinnedPlace/NPUPlace/MLUPlace"));
   }
-  self->SetDataType(framework::TransToProtoVarType(tensor->dtype()));
+  self->SetDataType(tensor->type());
 }
 
 static void InitVarBaseFromNumpyWithKwargs(imperative::VarBase *self,
@@ -243,7 +242,7 @@ static void InitVarBaseFromNumpyWithArg(imperative::VarBase *self,
   }
   SetTensorFromPyArray<P>(tensor, array, place, zero_copy);
   self->SetType(framework::proto::VarType::LOD_TENSOR);
-  self->SetDataType(framework::TransToProtoVarType(tensor->dtype()));
+  self->SetDataType(tensor->type());
 }
 
 static void InitVarBaseFromNumpyWithArgDefault(imperative::VarBase *self,
@@ -265,7 +264,7 @@ static void InitVarBaseFromTensorWithArgDefault(imperative::VarBase *self,
   new (self) imperative::VarBase(name_);
   self->SetPersistable(false);
   self->SetType(framework::proto::VarType::LOD_TENSOR);
-  self->SetDataType(framework::TransToProtoVarType(tensor.dtype()));
+  self->SetDataType(tensor.type());
   auto *new_tensor = self->MutableVar()->GetMutable<framework::LoDTensor>();
   // Same place，share data directly
   if (place == tensor.place()) {
@@ -290,7 +289,7 @@ static void InitVarBaseFromTensorWithArg(imperative::VarBase *self,
   new (self) imperative::VarBase(name_);
   self->SetPersistable(false);
   self->SetType(framework::proto::VarType::LOD_TENSOR);
-  self->SetDataType(framework::TransToProtoVarType(tensor.dtype()));
+  self->SetDataType(tensor.type());
   auto *new_tensor = self->MutableVar()->GetMutable<framework::LoDTensor>();
   // Same place，share data directly
   if (platform::is_same_place(place, tensor.place())) {
@@ -434,11 +433,9 @@ static Py_ssize_t GetSliceIndexFromTensor(
     const std::shared_ptr<imperative::VarBase> &tensor_index) {
   const auto &tensor = tensor_index->Var().Get<framework::LoDTensor>();
   if (tensor.numel() == 1) {
-    if (framework::TransToProtoVarType(tensor.dtype()) ==
-        framework::proto::VarType::INT32) {
+    if (tensor.type() == framework::proto::VarType::INT32) {
       return static_cast<Py_ssize_t>(operators::GetValue<int32_t>(&tensor));
-    } else if (framework::TransToProtoVarType(tensor.dtype()) ==
-               framework::proto::VarType::INT64) {
+    } else if (tensor.type() == framework::proto::VarType::INT64) {
       return static_cast<Py_ssize_t>(operators::GetValue<int64_t>(&tensor));
     } else {
       PADDLE_THROW(platform::errors::InvalidArgument(
@@ -790,7 +787,7 @@ void BindImperative(py::module *m_ptr) {
                                                    platform::CPUPlace(), true);
           // 3. allocate shared memory
           void *data_ptr = t.data();
-          size_t data_size = t.numel() * framework::DataTypeSize(t.dtype());
+          size_t data_size = t.numel() * framework::SizeOfType(t.type());
           auto shared_writer_holder =
               memory::allocation::AllocateMemoryMapWriterAllocation(data_size);
           // 4. maintain mmap fd set & backup ipc_name
@@ -825,7 +822,7 @@ void BindImperative(py::module *m_ptr) {
                                                    platform::CPUPlace(), true);
           // 3. allocate shared memory
           void *data_ptr = t.data();
-          size_t data_size = t.numel() * framework::DataTypeSize(t.dtype());
+          size_t data_size = t.numel() * framework::SizeOfType(t.type());
           auto shared_writer_holder =
               memory::allocation::AllocateMemoryMapWriterAllocation(data_size);
           // 4. maintain mmap fd set & backup ipc_name
@@ -1140,8 +1137,10 @@ void BindImperative(py::module *m_ptr) {
               {
                 // Release gil and do tracing
                 py::gil_scoped_release release;
+                VLOG(1) << "GIL release start!"
                 tracer->TraceOp("set_value", ins, outs, std::move(attrs),
                                 {{"Input", "Out"}});
+                VLOG(1) << "GIL release end!"
               }
             } else {
               auto self_numpy = TensorToPyArray(*self_tensor);
@@ -1178,6 +1177,7 @@ void BindImperative(py::module *m_ptr) {
                                 &list_select_idxs, &list_select_flag);
              // release gil and do tracing
              py::gil_scoped_release release;
+             VLOG(1) << "GIL release start!"
              const auto &tracer = imperative::GetCurrentTracer();
 
              auto out = slice_axes.empty() && !list_select_flag
@@ -1205,6 +1205,7 @@ void BindImperative(py::module *m_ptr) {
                  }
                }
                tracer->TraceOp(op_type, ins, outs, std::move(attrs));
+               VLOG(1) << "GIL release end!"
              }
              if (!none_axes.empty()) {
                // Deal with cases when all axes are decreased.
@@ -1317,7 +1318,7 @@ void BindImperative(py::module *m_ptr) {
               }
             }
 #define TENSOR_TO_PY_SCALAR(T, proto_type)                                   \
-  if (framework::TransToProtoVarType(tensor.dtype()) == proto_type) {        \
+  if (tensor.type() == proto_type) {                                         \
     std::string py_dtype_str = details::TensorDTypeToPyDTypeStr(proto_type); \
     T b = TensorGetElement<T>(tensor, offset);                               \
     return py::array(py::dtype(py_dtype_str.c_str()), {}, {},                \
@@ -1327,7 +1328,8 @@ void BindImperative(py::module *m_ptr) {
             _ForEachDataType_(TENSOR_TO_PY_SCALAR);
 #undef TENSOR_TO_PY_SCALAR
             PADDLE_THROW(platform::errors::Unimplemented(
-                "Unsupported tensor data type: %s", tensor.dtype()));
+                "Unsupported tensor data type: %s",
+                framework::DataTypeToString(tensor.type())));
           },
           py::return_value_policy::copy)
       .def("_inplace_version",
@@ -1579,7 +1581,7 @@ void BindImperative(py::module *m_ptr) {
              this interface, and prepare for the worst.
              */
              py::gil_scoped_release release;
-
+             VLOG(1) << "GIL release start!"
              if (self.HasGradVar()) {
                auto grad_var = self.GradVarBase();
                auto var_wrapper = grad_var->SharedVar();
@@ -1587,6 +1589,7 @@ void BindImperative(py::module *m_ptr) {
                  var_wrapper->ResetInplaceVersion(set_to_zero);
                }
              }
+             VLOG(1) << "GIL release end!"
            })
       .def("_grad_ivar",
            [](const imperative::VarBase &self) {
@@ -1619,6 +1622,7 @@ void BindImperative(py::module *m_ptr) {
       .def("_allreduce",
            [](imperative::VarBase &self,
               const imperative::ParallelStrategy &strategy) {
+             VLOG(1) << "GIL release start!"
              if (strategy.nranks_ > 1) {
 #if defined(PADDLE_WITH_NCCL) || defined(PADDLE_WITH_RCCL)
 #if NCCL_VERSION_CODE >= 2212
@@ -1640,6 +1644,7 @@ void BindImperative(py::module *m_ptr) {
                    "not compiled with NCCL."));
 #endif  // PADDLE_WITH_NCCL or PADDLE_WITH_RCCL
              }
+             VLOG(1) << "GIL release end!"
            },
            py::call_guard<py::gil_scoped_release>())
       .def("_register_grad_hook",
@@ -1854,9 +1859,7 @@ void BindImperative(py::module *m_ptr) {
              auto *t = self->MutableVar()->GetMutable<framework::LoDTensor>();
              // 2. allocate shared memory
              void *data_ptr = t->data();
-             size_t data_size =
-                 t->numel() * framework::SizeOfType(
-                                  framework::TransToProtoVarType(t->dtype()));
+             size_t data_size = t->numel() * framework::SizeOfType(t->type());
              auto shared_writer_holder =
                  memory::allocation::AllocateMemoryMapWriterAllocation(
                      data_size);
@@ -1891,9 +1894,7 @@ void BindImperative(py::module *m_ptr) {
              // Register the cpu memory as the cuda host memory
              const auto &data_numel = self_tensor->numel();
              const size_t &need_allocate_size =
-                 data_numel *
-                 framework::SizeOfType(
-                     framework::TransToProtoVarType(self_tensor->dtype()));
+                 data_numel * framework::SizeOfType(self_tensor->type());
              void *data_ptr = self_tensor->data();
              auto result = cudaHostRegister(data_ptr, need_allocate_size,
                                             cudaHostRegisterDefault);
@@ -1913,7 +1914,7 @@ void BindImperative(py::module *m_ptr) {
                  std::make_shared<memory::allocation::Allocation>(
                      cuda_device_pointer, need_allocate_size,
                      platform::CUDAPlace(device_id));
-             self_tensor->ResetHolderWithType(holder, self_tensor->dtype());
+             self_tensor->ResetHolderWithType(holder, self_tensor->type());
            },
            py::arg("device_id") = 0, py::return_value_policy::reference, R"DOC(
         Returns self tensor with the UVA(unified virtual addressing).
@@ -2311,9 +2312,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
-               self.TraceOp<imperative::VarBase>(
-                   type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs), place, trace_backward, inplace_map);
+               VLOG(1) << "GIL release start!"
+               self.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                            std::move(attrs), place, trace_backward,
+                            inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2326,9 +2329,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
-               self.TraceOp<imperative::VarBase>(
-                   type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs), place, trace_backward, inplace_map);
+               VLOG(1) << "GIL release start!"
+               self.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                            std::move(attrs), place, trace_backward,
+                            inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2341,9 +2346,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
-               self.TraceOp<imperative::VarBase>(
-                   type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs), place, trace_backward, inplace_map);
+               VLOG(1) << "GIL release start!"
+               self.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                            std::move(attrs), place, trace_backward,
+                            inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2356,9 +2363,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
-               self.TraceOp<imperative::VarBase>(
-                   type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs), place, trace_backward, inplace_map);
+               VLOG(1) << "GIL release start!"
+               self.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                            std::move(attrs), place, trace_backward,
+                            inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            })
       .def("trace",
@@ -2371,9 +2380,11 @@ void BindImperative(py::module *m_ptr) {
              auto outs_map = ConvertToNameVarBaseMap(outs);
              {
                py::gil_scoped_release release;
-               self.TraceOp<imperative::VarBase>(
-                   type, std::move(ins_map), std::move(outs_map),
-                   std::move(attrs), place, trace_backward, inplace_map);
+               VLOG(1) << "GIL release start!"
+               self.TraceOp(type, std::move(ins_map), std::move(outs_map),
+                            std::move(attrs), place, trace_backward,
+                            inplace_map);
+               VLOG(1) << "GIL release end!"
              }
            });
 
@@ -2432,11 +2443,13 @@ void BindImperative(py::module *m_ptr) {
          const std::vector<std::shared_ptr<imperative::VarBase>> &no_grad_vars,
          const platform::Place &place, bool create_graph, bool retain_graph,
          bool allow_unused, bool only_inputs) {
+        VLOG(1) << "GIL release start!"
         imperative::PartialGradEngine engine(
             input_targets, output_targets, output_grads, no_grad_vars, place,
             create_graph, retain_graph, allow_unused, only_inputs);
         engine.Execute();
         return engine.GetResult();
+        VLOG(1) << "GIL release end!"
       },
       py::call_guard<py::gil_scoped_release>());
 
@@ -2445,11 +2458,13 @@ void BindImperative(py::module *m_ptr) {
       [](const std::vector<std::shared_ptr<imperative::VarBase>> &tensors,
          const std::vector<std::shared_ptr<imperative::VarBase>> &grad_tensors,
          bool retain_graph, const imperative::Tracer &tracer) {
+        VLOG(1) << "GIL release start!"
         auto *engine = tracer.GetEngine();
         engine->Init(tensors, grad_tensors, retain_graph);
         VLOG(3) << "Start backward";
         engine->Execute();
         VLOG(3) << "Finish backward";
+        VLOG(1) << "GIL release end!"
       },
       py::call_guard<py::gil_scoped_release>());
 

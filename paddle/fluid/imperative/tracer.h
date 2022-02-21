@@ -63,6 +63,8 @@ class Tracer {
 
   ~Tracer() = default;
 
+  static Tracer* reuse() { return new(&reused_tracer_) Tracer(); }
+
   template <typename VarType>
   void TraceOp(const std::string& type, const NameVarMap<VarType>& ins,
                const NameVarMap<VarType>& outs, framework::AttributeMap attrs,
@@ -141,6 +143,7 @@ class Tracer {
   std::unique_ptr<UniqueNameGenerator> generator_;
   platform::Place expected_place_;
   GarbageCollectorMap gcs_;
+  static Tracer reused_tracer_;
   static thread_local bool has_grad_;
   static thread_local AmpLevel amp_level_;
 };
