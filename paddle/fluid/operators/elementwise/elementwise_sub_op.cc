@@ -74,6 +74,25 @@ class ElementwiseSubDoubleGradMaker : public framework::SingleGradOpMaker<T> {
   }
 };
 
+template <typename T>
+class ElementwiseSubTripleGradMaker : public framework::SingleGradOpMaker<T> {
+ public:
+  using framework::SingleGradOpMaker<T>::SingleGradOpMaker;
+
+ protected:
+  void Apply(GradOpPtr<T> op) const override {
+    op->SetType("elementwise_sub_triple_grad");
+    op->SetInput("DDX", this->Input("DDX"));
+    op->SetInput("DDY", this->Input("DDY"));
+    op->SetInput("D_DDOut", this->OutputGrad("DDOut"));
+
+    op->SetAttrMap(this->Attrs());
+
+    op->SetOutput("D_DDX", this->InputGrad("DDX"));
+    op->SetOutput("D_DDY", this->InputGrad("DDY"));
+  }
+};
+
 }  // namespace operators
 }  // namespace paddle
 
@@ -87,10 +106,19 @@ REGISTER_OPERATOR(
     ops::ElementwiseGradOpInplaceInferer, ops::ElementwiseGradNoBufVarsInferer,
     ops::ElementwiseSubDoubleGradMaker<paddle::framework::OpDesc>,
     ops::ElementwiseSubDoubleGradMaker<paddle::imperative::OpBase>);
-REGISTER_OPERATOR(elementwise_sub_grad_grad,
-                  ops::ElementwiseOpDoubleGradWithoutDXDY,
-                  ops::ElementwiseDoubleGradOpInplaceInferer,
-                  ops::ElementwiseDoubleGradNoBufVarsInferer);
+
+REGISTER_OPERATOR(
+    elementwise_sub_grad_grad,
+    ops::ElementwiseOpDoubleGradWithoutDXDY,
+    ops::ElementwiseDoubleGradOpInplaceInferer,
+    ops::ElementwiseDoubleGradNoBufVarsInferer,
+    ops::ElementwiseSubTripleGradMaker<paddle::framework::OpDesc>,
+    ops::ElementwiseSubTripleGradMaker<paddle::imperative::OpBase>);
+
+REGISTER_OPERATOR(elementwise_sub_triple_grad, ops::ElementwiseOpTripleGrad,
+                  ops::ElementwiseTripleGradOpInplaceInferer,
+                  ops::ElementwiseTripleGradNoBufVarsInferer);
+
 
 REGISTER_OP_CPU_KERNEL(
     elementwise_sub,

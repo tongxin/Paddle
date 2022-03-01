@@ -64,4 +64,13 @@ void SubtractDoubleGradKernel(const Context& dev_ctx,
                               int axis,
                               DenseTensor* ddout);
 
+template <typename T, typename Context>
+void SubTripleGradKernel(const Context& dev_ctx,
+                         const DenseTensor& ddx,
+                         const DenseTensor& ddy,
+                         const DenseTensor& d_ddout,
+                         int axis,
+                         DenseTensor* d_ddx,
+                         DenseTensor* d_ddy);
+
 }  // namespace phi

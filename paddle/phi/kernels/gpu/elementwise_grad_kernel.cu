@@ -117,6 +117,23 @@ void SubtractDoubleGradKernel(const Context& dev_ctx,
       ElementwiseCompute<funcs::SubtractFunctor<T>, T>);
 }
 
+template <typename T, typename Context>
+void SubtractTripleGradKernel(const Context& dev_ctx,
+                              const DenseTensor& x,
+                              const DenseTensor& y,
+                              const DenseTensor& dout,
+                              int axis,
+                              DenseTensor* dx,
+                              DenseTensor* dy) {
+  // skip out
+  auto* out = &dout;
+  if (dx != nullptr && dy != nullptr && (dx->dims() == dy->dims())) {
+    elementwise_sub_grad<T>(dev_ctx, x, y, *out, dout, dx, dy);
+  } else {
+    default_elementwise_sub_grad<T>(dev_ctx, x, y, *out, dout, dx, dy, axis);
+  }
+}
+
 }  // namespace phi
 
 PD_REGISTER_KERNEL(add_grad,
@@ -175,6 +192,19 @@ PD_REGISTER_KERNEL(subtract_double_grad,
                    GPU,
                    ALL_LAYOUT,
                    phi::SubtractDoubleGradKernel,
+                   float,
+                   double,
+                   int,
+                   int64_t,
+                   phi::dtype::float16,
+                   phi::dtype::bfloat16,
+                   phi::dtype::complex<float>,
+                   phi::dtype::complex<double>) {}
+
+PD_REGISTER_KERNEL(sub_triple_grad,
+                   GPU,
+                   ALL_LAYOUT,
+                   phi::SubTripleGradKernel,
                    float,
                    double,
                    int,
