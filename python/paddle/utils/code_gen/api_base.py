@@ -35,7 +35,7 @@ class BaseAPI(object):
         # args_str:
         #     args_declare : "str" // str of function params with default value. Example: (..., bool flag=false)
         #     args_define : "str" // str of function params without default value. Example: (..., bool flag)
-        self.inputs, self.attrs, self.outputs, self.args_str = self.parse_args(
+        self.inputs, self.attrs, self.outputs, self.args_str, self.optional_vars = self.parse_args(
             self.api, api_item_yaml)
 
         self.is_base_api = True
@@ -43,27 +43,38 @@ class BaseAPI(object):
             self.is_base_api = False
             self.invoke = api_item_yaml['invoke']
         else:
-            self.infer_meta = self.parse_infer_meta(api_item_yaml['infer_meta'])
+            if 'infer_meta' in api_item_yaml:
+                self.infer_meta = self.parse_infer_meta(api_item_yaml[
+                    'infer_meta'])
             self.kernel = self.parse_kernel(api_item_yaml['kernel'])
             self.support_selected_rows_kernel = False if len(self.kernel[
                 'func']) == 1 else True
             self.data_transform = self.parse_data_transform(api_item_yaml)
+            self.inplace_map = self.parse_inplace(api_item_yaml)
 
     def get_api_name(self, api_item_yaml):
         return api_item_yaml['api']
 
+    def get_api_func_name(self):
+        return self.api
+
     def parse_args(self, api_name, api_item_yaml):
+        optional_vars = []
+        if 'optional' in api_item_yaml:
+            optional_vars = [
+                item.strip() for item in api_item_yaml['optional'].split(',')
+            ]
         inputs, attrs, args_str = self.parse_input_and_attr(
-            api_name, api_item_yaml['args'])
+            api_name, api_item_yaml['args'], optional_vars)
         output_type_list, output_names, return_type = self.parse_output(
             api_name, api_item_yaml['output'])
         return inputs, attrs, {
             'names': output_names,
             'types': output_type_list,
             'return_type': return_type
-        }, args_str
+        }, args_str, optional_vars
 
-    def parse_input_and_attr(self, api_name, args_config):
+    def parse_input_and_attr(self, api_name, args_config, optional_vars=[]):
         inputs = {'names': [], 'input_info': {}}
         attrs = {'names': [], 'attr_info': {}}
         args_str = args_config.strip()
@@ -71,27 +82,64 @@ class BaseAPI(object):
             f"Args declaration should start with '(' and end with ')', please check the args of {api_name} in yaml."
         args_str = args_str[1:-1]
         args_list = args_str.split(',')
-        input_types = [
-            'const Tensor&', 'const Tensor &', 'const std::vector<Tensor>&',
-            'const std::vector<Tensor> &'
-        ]
-        attr_types = ['const Scalar&', 'const Scalar &', 'const ScalarArray&', 'const ScalarArray &', \
-                      'int', 'int32_t', 'int64_t', 'size_t', 'float', 'double', 'bool', \
-                      'const std::vector<int64_t>&', 'Backend', 'DataLayout', 'DataType']
+        input_types_map = {
+            'Tensor': 'const Tensor&',
+            'Tensor[]': 'const std::vector<Tensor>&'
+        }
+        attr_types_map = {
+            'ScalarArray': 'const ScalarArray&',
+            'Scalar': 'const Scalar&',
+            'Scalar(int)': 'const Scalar&',
+            'Scalar(int64_t)': 'const Scalar&',
+            'Scalar(float)': 'const Scalar&',
+            'Scalar(dobule)': 'const Scalar&',
+            'int': 'int',
+            'int32_t': 'int32_t',
+            'int64_t': 'int64_t',
+            'long': 'long',
+            'size_t': 'size_t',
+            'float': 'float',
+            'double': 'double',
+            'bool': 'bool',
+            'str': 'const std::string&',
+            'Place': 'Place',
+            'DataLayout': 'DataLayout',
+            'DataType': 'DataType',
+            'int64_t[]': 'const std::vector<int64_t>&',
+            'int[]': 'const std::vector<int>&'
+        }
+        optional_types_trans = {
+            'Tensor': 'const paddle::optional<Tensor>&',
+            'Tensor[]': 'const paddle::optional<std::vector<Tensor>>&',
+            'int': 'paddle::optional<int>',
+            'int32_t': 'paddle::optional<int32_t>',
+            'int64_t': 'paddle::optional<int64_t>',
+            'float': 'paddle::optional<float>',
+            'double': 'paddle::optional<double>',
+            'bool': 'paddle::optional<bool>',
+            'Place': 'paddle::optional<Place>',
+            'DataLayout': 'paddle::optional<DataLayout>',
+            'DataType': 'paddle::optional<DataType>'
+        }
+
         args_declare_str = ""
         args_define_str = ""
 
         for item in args_list:
             item = item.strip()
+            type_and_name = item.split(' ')
             # match the input tensor
             has_input = False
-            for in_type in input_types:
-                if item.startswith(in_type):
-                    input_name = item[len(in_type):].strip()
+            for in_type_symbol, in_type in input_types_map.items():
+                if type_and_name[0] == in_type_symbol:
+                    input_name = type_and_name[1].strip()
                     assert len(input_name) > 0, \
                         f"The input tensor name should not be empty. Please check the args of {api_name} in yaml."
                     assert len(attrs['names']) == 0, \
                         f"The input Tensor should appear before attributes. please check the position of {api_name}:input({input_name}) in yaml"
+
+                    if input_name in optional_vars:
+                        in_type = optional_types_trans[in_type_symbol]
 
                     inputs['names'].append(input_name)
                     inputs['input_info'][input_name] = in_type
@@ -103,9 +151,9 @@ class BaseAPI(object):
                 continue
 
             # match the attribute
-            for attr_type in attr_types:
-                if item.startswith(attr_type):
-                    attr_name = item[len(attr_type):].strip()
+            for attr_type_symbol, attr_type in attr_types_map.items():
+                if type_and_name[0] == attr_type_symbol:
+                    attr_name = item[len(attr_type_symbol):].strip()
                     assert len(attr_name) > 0, \
                         f"The attribute name should not be empty. Please check the args of {api_name} in yaml."
                     default_value = None
@@ -113,6 +161,9 @@ class BaseAPI(object):
                         attr_infos = attr_name.split('=')
                         attr_name = attr_infos[0].strip()
                         default_value = attr_infos[1].strip()
+
+                    if attr_name in optional_vars:
+                        attr_type = optional_types_trans[attr_type_symbol]
 
                     default_value_str = "" if default_value is None else '=' + default_value
                     args_declare_str = args_declare_str + attr_type + ' ' + attr_name + default_value_str + ', '
@@ -128,25 +179,28 @@ class BaseAPI(object):
 
     def parse_output(self, api_name, output_config):
         def parse_output_item(output_item):
-            alllowd_output_types = ['Tensor', 'std::vector<Tensor>']
-            if re.search(r'\(\w*\)', output_item):
+            output_type_map = {
+                'Tensor': 'Tensor',
+                'Tensor[]': 'std::vector<Tensor>'
+            }
+            if re.search(r'\([a-zA-Z0-9_@]*\)', output_item):
                 result = re.search(
-                    r"(?P<out_type>[a-zA-Z0-9_<>]+)\s*\((?P<name>\w+)\)",
+                    r"(?P<out_type>[a-zA-Z0-9_[\]]+)\s*\((?P<name>[a-zA-Z0-9_@]+)\)",
                     output_item)
                 out_type = result.group('out_type')
-                assert out_type in alllowd_output_types, \
-                    f"{api_name} : Output type error: the output type only support Tensor and std::vector<Tensor>, \
+                assert out_type in output_type_map, \
+                    f"{api_name} : Output type error: the output type only support Tensor and Tensor[], \
                       but now is {out_type}."
 
                 return out_type, result.group('name')
 
             else:
-                if output_item.strip() in alllowd_output_types:
-                    return output_item.strip(), 'out'
+                if output_item.strip() in output_type_map:
+                    return output_type_map[output_item.strip()], 'out'
                 else:
                     raise ValueError(
-                        "{} : Output type error: the output type only support Tensor and std::vector<Tensor>, \
-                      but now is {}.".format(api_name, out_type))
+                        "{} : Output type error: the output type only support Tensor and Tensor[], \
+                      but now is {}.".format(api_name, output_item.strip()))
 
         temp_list = output_config.split(',')
 
@@ -219,13 +273,37 @@ class BaseAPI(object):
 
         return data_transform
 
+    def parse_inplace(self, api_item_yaml):
+        if 'inplace' in api_item_yaml:
+            inplace_map = {}
+            inplace_list = api_item_yaml['inplace'].split(',')
+            for item in inplace_list:
+                result = re.search(r"(?P<in>\w+)\s*->\s(?P<out>\w+)", item)
+                in_val = result.group('in')
+                out_val = result.group('out')
+                assert in_val in self.inputs['names'], \
+                    f"{self.api} : Inplace input error: the input var name('{in_val}') is not found in the input args of {self.api}."
+                assert out_val in self.outputs['names'], \
+                    f"{self.api} : Inplace output error: the output var name('{out_val}') is not found in the output args of {self.api}."
+
+                inplace_map[out_val] = in_val
+
+            return inplace_map
+        else:
+            return None
+
     # Override by child class
     def get_return_type(self, out_type_list):
         return None
 
     def gene_api_declaration(self):
         api_declaration = f"""
-PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare']});
+PADDLE_API {self.gene_return_type_code()} {self.get_api_func_name()}({self.args_str['args_declare']});
+"""
+
+        if self.is_base_api and self.inplace_map is not None:
+            api_declaration = api_declaration + f"""
+PADDLE_API {self.gene_return_type_code()} {self.get_api_func_name() + '_'}({self.args_str['args_declare']});
 """
 
         return api_declaration
@@ -246,9 +324,9 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         attr_layout_count = 0
         attr_data_type_count = 0
         for attr_name in attrs['names']:
-            if attrs['attr_info'][attr_name][0] == 'Backend':
+            if attrs['attr_info'][attr_name][0] == 'Place':
                 assert kernel['backend'] is not None, \
-                    f"{api} api: When there is a parameter with 'Backend' type in attributes, you must set backend of kernel manually."
+                    f"{api} api: When there is a parameter with 'Place' type in attributes, you must set backend of kernel manually."
                 attr_backend_count = attr_backend_count + 1
             if attrs['attr_info'][attr_name][0] == 'DataLayout':
                 assert kernel['layout'] is not None, \
@@ -267,8 +345,8 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
                 assert len(
                     vars_list
                 ) == 2, f"{api} api: The number of params to set backend with '>' only allows 2, but received {len(vars_list)}."
-                assert (vars_list[0].strip() in attrs['names']) and (attrs['attr_info'][vars_list[0].strip()][0] == 'Backend'), \
-                    f"{api} api: When use '>' to set kernel backend, the first param should be a attribute with Backend type."
+                assert (vars_list[0].strip() in attrs['names']) and (attrs['attr_info'][vars_list[0].strip()][0] == 'Place'), \
+                    f"{api} api: When use '>' to set kernel backend, the first param should be a attribute with Place type."
                 kernel_select_code = kernel_select_code + f"""
   kernel_backend = ParseBackendWithInputOrder({vars_list[0].strip()}, {vars_list[1].strip()});
 """
@@ -324,8 +402,8 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
 """
 
         if len(input_names) == 0:
-            assert attr_backend_count > 0 and attr_layout_count > 0 and attr_data_type_count > 0, \
-                f"{api} api: When there is no input tensor, the args must have 'Backend', 'DataLayout' and 'DataType'."
+            assert attr_backend_count > 0 and attr_data_type_count > 0, \
+                f"{api} api: When there is no input tensor, the args must have 'Backend' and 'DataType'."
 
         kernel_select_args = ""
         for input_name in input_names:
@@ -339,7 +417,7 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         if len(input_names) > 0:
             if self.support_selected_rows_kernel:
                 kernel_select_code = kernel_select_code + f"""
-  KernelType kernel_type;
+  KernelType kernel_type = ParseKernelTypeByInputArgs({", ".join(input_names)});
 """
 
             kernel_select_code = kernel_select_code + f"""
@@ -347,8 +425,7 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         || kernel_layout == DataLayout::UNDEFINED
         || kernel_data_type == DataType::UNDEFINED ) {{
     auto kernel_key_set = ParseKernelKeyByInputArgs({kernel_select_args});
-    auto kernel_key = kernel_key_set.GetHigestPriorityKernelKey();
-    {'kernel_type = kernel_key_set.kernel_type;' if self.support_selected_rows_kernel else ''}
+    auto kernel_key = kernel_key_set.GetHighestPriorityKernelKey();
     if (kernel_backend == Backend::UNDEFINED) {{
       kernel_backend = kernel_key.backend();
     }}
@@ -375,9 +452,34 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         param_code = ""
         for param in infer_meta_params:
             if param in input_names:
-                param_code = param_code + "MakeMetaTensor(*" + PREFIX_TENSOR_NAME + param + "), "
+                if self.inputs['input_info'][param] == "const Tensor&":
+                    param_code = param_code + "MakeMetaTensor(*" + PREFIX_TENSOR_NAME + param + "), "
+                elif self.inputs['input_info'][
+                        param] == "const std::vector<Tensor>&":
+                    meta_tensor_code = meta_tensor_code + f"""
+{code_indent}  auto {param}_meta_vec = MakeMetaTensor({PREFIX_TENSOR_NAME}{param});
+{code_indent}  std::vector<phi::MetaTensor*> {param}_metas({param}_meta_vec.size());
+{code_indent}  for (size_t i = 0; i < {param}_meta_vec.size(); ++i) {{
+{code_indent}    {param}_metas[i] = &{param}_meta_vec[i];
+{code_indent}  }}
+"""
+
+                    param_code = param_code + param + "_metas, "
+                elif param in self.optional_vars:
+                    meta_tensor_code = meta_tensor_code + f"""
+{code_indent}  paddle::optional<const phi::MetaTensor&> {PREFIX_TENSOR_NAME}meta_ref_{param}(paddle::none);
+{code_indent}  auto {PREFIX_TENSOR_NAME}meta_{param} = MakeMetaTensor({PREFIX_TENSOR_NAME}{param});
+{code_indent}  if ({PREFIX_TENSOR_NAME}meta_{param}) {{
+{code_indent}    {PREFIX_TENSOR_NAME}meta_ref_{param} = paddle::make_optional<const phi::MetaTensor&>(*{PREFIX_TENSOR_NAME}meta_{param});
+{code_indent}  }}"""
+
+                    param_code = param_code + f"{PREFIX_TENSOR_NAME}meta_ref_{param}, "
+                else:
+                    raise ValueError(
+                        f"{self.api} : Param of infer_meta error : {self.inputs['input_info'][param]} type is not supported."
+                    )
             elif param in kernel_output_names:
-                meta_tensor_code = meta_tensor_code + code_indent + "  pten::MetaTensor " + param.replace(
+                meta_tensor_code = meta_tensor_code + code_indent + "  phi::MetaTensor " + param.replace(
                     'kernel_', PREFIX_META_TENSOR_NAME) + "(" + param + ");\n"
                 param_code = param_code + "&" + param.replace(
                     'kernel_', PREFIX_META_TENSOR_NAME) + ", "
@@ -392,21 +494,22 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
 
         param_code = param_code[:-2]
         return f"""{meta_tensor_code}
-{code_indent}  pten::{infer_meta['func']}({param_code});
+{code_indent}  phi::{infer_meta['func']}({param_code});
 """
 
     def get_kernel_args(self, code_indent):
         input_trans_map = {
-            'const Tensor&': 'const pten::DenseTensor&',
-            'const Tensor &': 'const pten::DenseTensor&',
+            'const Tensor&': 'const phi::DenseTensor&',
             'const std::vector<Tensor>&':
-            'const std::vector<pten::DenseTensor>&',
-            'const std::vector<Tensor> &':
-            'const std::vector<pten::DenseTensor>&'
+            'const std::vector<const phi::DenseTensor*>&',
+            'const paddle::optional<Tensor>&':
+            'paddle::optional<const phi::DenseTensor&>',
+            'const paddle::optional<std::vector<Tensor>>&':
+            'paddle::optional<const std::vector<phi::DenseTensor>&>'
         }
         out_trans_map = {
-            'Tensor': 'pten::DenseTensor*',
-            'std::vector<Tensor>': 'std::vector<pten::DenseTensor*>&'
+            'Tensor': 'phi::DenseTensor*',
+            'std::vector<Tensor>': 'std::vector<phi::DenseTensor*>&'
         }
         input_names = self.inputs['names']
         input_infos = self.inputs['input_info']
@@ -426,27 +529,68 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
                     trans_flag = "{true}"
                 elif input_name in self.data_transform['support_trans_dtype']:
                     trans_flag = "{false, true}"
-                input_tensor_code = input_tensor_code + f"""
+                if input_name in self.optional_vars:
+                    input_tensor_code = input_tensor_code + f"""
+{code_indent}  {input_trans_map[input_infos[input_name]]} {PREFIX_TENSOR_NAME}{input_name}(paddle::none);
+{code_indent}  auto {PREFIX_TENSOR_NAME}{input_name}_ptr = PrepareData({input_name}, kernel.InputAt({i}), {trans_flag});
+{code_indent}  if ({PREFIX_TENSOR_NAME}{input_name}_ptr) {{
+{code_indent}    {PREFIX_TENSOR_NAME}{input_name} = paddle::make_optional<const phi::DenseTensor&>(*{PREFIX_TENSOR_NAME}{input_name}_ptr);
+{code_indent}  }}"""
+
+                else:
+                    if self.inputs['input_info'][input_name] == "const Tensor&":
+                        input_tensor_code = input_tensor_code + f"""
 {code_indent}  auto {PREFIX_TENSOR_NAME}{input_name} = PrepareData({input_name}, kernel.InputAt({i}), {trans_flag});"""
 
+                    elif self.inputs['input_info'][
+                            input_name] == "const std::vector<Tensor>&":
+                        input_tensor_code = input_tensor_code + f"""
+{code_indent}  auto {PREFIX_TENSOR_NAME}{input_name}_vec = PrepareData({input_name}, kernel.InputAt({i}), {trans_flag});
+{code_indent}  std::vector<const phi::DenseTensor*> {PREFIX_TENSOR_NAME}{input_name}({PREFIX_TENSOR_NAME}{input_name}_vec->size());
+{code_indent}  for (size_t i = 0; i < {PREFIX_TENSOR_NAME}{input_name}.size(); ++i) {{
+{code_indent}    {PREFIX_TENSOR_NAME}{input_name}[i] = &{PREFIX_TENSOR_NAME}{input_name}_vec->at(i);
+{code_indent}  }}"""
+
+                    else:
+                        # do nothing
+                        pass
             else:
-                input_tensor_code = input_tensor_code + f"""
+                if input_name in self.optional_vars:
+                    input_tensor_code = input_tensor_code + f"""
+{code_indent}  {input_trans_map[input_infos[input_name]]} {PREFIX_TENSOR_NAME}{input_name}(paddle::none);
+{code_indent}  auto {PREFIX_TENSOR_NAME}{input_name}_ptr = TensorToDenseTensor({input_name});
+{code_indent}  if ({PREFIX_TENSOR_NAME}{input_name}_ptr) {{
+{code_indent}    {PREFIX_TENSOR_NAME}{input_name} = paddle::make_optional<const phi::DenseTensor&>(*{PREFIX_TENSOR_NAME}{input_name}_ptr);
+{code_indent}  }}"""
+
+                else:
+                    input_tensor_code = input_tensor_code + f"""
 {code_indent}  auto {PREFIX_TENSOR_NAME}{input_name} = TensorToDenseTensor({input_name});"""
 
         kernel_args = "*dev_ctx, "
         for param in kernel_param:
             if param in input_names:
-                kernel_args = kernel_args + "*" + PREFIX_TENSOR_NAME + param + ", "
-                kernel_args_type_list.append(input_trans_map[input_infos[
-                    param]])
+                if param in self.optional_vars:
+                    kernel_args = kernel_args + PREFIX_TENSOR_NAME + param + ", "
+                else:
+                    if self.inputs['input_info'][param] == "const Tensor&":
+                        kernel_args = kernel_args + "*" + PREFIX_TENSOR_NAME + param + ", "
+                    elif self.inputs['input_info'][
+                            input_name] == "const std::vector<Tensor>&":
+                        kernel_args = kernel_args + PREFIX_TENSOR_NAME + param + ", "
+                    else:
+                        # do nothing
+                        pass
+                kernel_in_type = input_trans_map[input_infos[param]]
+                kernel_args_type_list.append(kernel_in_type)
             elif param in attr_names:
                 # set attr for kernel_context
                 if 'ScalarArray' in self.attrs['attr_info'][param][0]:
-                    kernel_args_type_list.append('const pten::ScalarArray&')
-                    param = 'pten::ScalarArray(' + param + ')'
+                    kernel_args_type_list.append('const phi::ScalarArray&')
+                    param = 'phi::ScalarArray(' + param + ')'
                 elif 'Scalar' in self.attrs['attr_info'][param][0]:
-                    kernel_args_type_list.append('const pten::Scalar&')
-                    param = 'pten::Scalar(' + param + ')'
+                    kernel_args_type_list.append('const phi::Scalar&')
+                    param = 'phi::Scalar(' + param + ')'
                 else:
                     kernel_args_type_list.append(self.attrs['attr_info'][param][
                         0])
@@ -465,22 +609,16 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
 
     def get_selected_rows_kernel_args(self, code_indent):
         input_trans_map = {
-            'const Tensor&': 'const pten::SelectedRows&',
-            'const Tensor &': 'const pten::SelectedRows&'
+            'const Tensor&': 'const phi::SelectedRows&',
+            'const paddle::optional<Tensor>&':
+            'paddle::optional<const phi::SelectedRows&>'
         }
-        out_trans_map = {'Tensor': 'pten::SelectedRows*'}
+        out_trans_map = {'Tensor': 'phi::SelectedRows*'}
         input_names = self.inputs['names']
         input_infos = self.inputs['input_info']
         kernel_args_type_list = ['const platform::DeviceContext&']
 
-        input_tensor_code = ""
-        for input_name in input_names:
-            # set input code
-            input_tensor_code = input_tensor_code + f"""
-      auto {PREFIX_TENSOR_NAME}{input_name} = TensorToSelectedRows({input_name});"""
-
         attr_names = self.attrs['names']
-
         kernel_param = self.kernel['param']
         if kernel_param is None:
             kernel_param = input_names + attr_names
@@ -488,23 +626,36 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         input_tensor_code = ""
         for i, input_name in enumerate(input_names):
             # set input code
-            input_tensor_code = input_tensor_code + f"""
+            if input_name in self.optional_vars:
+                input_tensor_code = input_tensor_code + f"""
+
+{code_indent}  {input_trans_map[input_infos[input_name]]} {PREFIX_TENSOR_NAME}{input_name}(paddle::none);
+{code_indent}  auto {PREFIX_TENSOR_NAME}{input_name}_ptr = TensorToSelectedRows({input_name});
+{code_indent}  if ({PREFIX_TENSOR_NAME}{input_name}_ptr) {{
+{code_indent}    {PREFIX_TENSOR_NAME}{input_name} = paddle::make_optional<const phi::SelectedRows&>(*{PREFIX_TENSOR_NAME}{input_name}_ptr);
+{code_indent}  }}"""
+
+            else:
+                input_tensor_code = input_tensor_code + f"""
 {code_indent}  auto {PREFIX_TENSOR_NAME}{input_name} = TensorToSelectedRows({input_name});"""
 
         kernel_args = "*dev_ctx, "
         for param in kernel_param:
             if param in input_names:
-                kernel_args = kernel_args + "*" + PREFIX_TENSOR_NAME + param + ", "
-                kernel_args_type_list.append(input_trans_map[input_infos[
-                    param]])
+                if param in self.optional_vars:
+                    kernel_args = kernel_args + PREFIX_TENSOR_NAME + param + ", "
+                else:
+                    kernel_args = kernel_args + "*" + PREFIX_TENSOR_NAME + param + ", "
+                kernel_in_type = input_trans_map[input_infos[param]]
+                kernel_args_type_list.append(kernel_in_type)
             elif param in attr_names:
                 # set attr for kernel_context
                 if 'ScalarArray' in self.attrs['attr_info'][param][0]:
-                    kernel_args_type_list.append('const pten::ScalarArray&')
-                    param = 'pten::ScalarArray(' + param + ')'
+                    kernel_args_type_list.append('const phi::ScalarArray&')
+                    param = 'phi::ScalarArray(' + param + ')'
                 elif 'Scalar' in self.attrs['attr_info'][param][0]:
-                    kernel_args_type_list.append('const pten::Scalar&')
-                    param = 'pten::Scalar(' + param + ')'
+                    kernel_args_type_list.append('const phi::Scalar&')
+                    param = 'phi::Scalar(' + param + ')'
                 else:
                     kernel_args_type_list.append(self.attrs['attr_info'][param][
                         0])
@@ -522,16 +673,29 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
         return input_tensor_code, kernel_args[:-2], kernel_signature
 
     # Override by child class
-    def gene_output(self, output_type_list, set_out_func, code_indent):
+    def gene_return_type_code(self):
+        return self.outputs['return_type']
+
+    # Override by child class
+    def gene_return_code(self):
+        return "api_output"
+
+    # Override by child class
+    def gene_output(self,
+                    output_type_list,
+                    set_out_func,
+                    code_indent,
+                    inplace_flag=False):
         return None, None, None
 
-    def gen_dense_tensor_kernel_code(self, code_indent):
+    def gen_dense_tensor_kernel_code(self, code_indent, inplace_flag=False):
         input_tensors, kernel_args, kernel_signature = self.get_kernel_args(
             code_indent)
         outputs_args, kernel_output_names, output_create = self.gene_output(
-            self.outputs['types'], 'SetKernelOutput', code_indent)
+            self.outputs['types'], 'SetKernelOutput', code_indent, inplace_flag)
+        api_func_name = self.get_api_func_name() + ('_' if inplace_flag else '')
         return f"""
-{code_indent}  auto kernel = pten::KernelFactory::Instance().SelectKernelOrThrowError(
+{code_indent}  const auto& kernel = phi::KernelFactory::Instance().SelectKernelOrThrowError(
 {code_indent}      "{self.kernel['func'][0]}", {{kernel_backend, kernel_layout, kernel_data_type}});
 {code_indent}  VLOG(6) << "{self.api} API kernel key: [" << kernel_backend << ", " << kernel_layout << ", "<< kernel_data_type << "]";
 {code_indent}  VLOG(6) << "{self.api} API kernel: " << kernel;
@@ -543,17 +707,22 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
 
 {code_indent}  using kernel_signature = {kernel_signature};
 {code_indent}  auto* kernel_fn = kernel.GetVariadicKernelFn<kernel_signature>();
-{code_indent}  (*kernel_fn)({kernel_args}, {outputs_args});
+{code_indent}  {{
+{code_indent}    paddle::platform::RecordEvent kernel_record_event(\"{api_func_name} compute\", paddle::platform::TracerEventType::Operator, 1);
+{code_indent}    (*kernel_fn)({kernel_args}, {outputs_args});
+{code_indent}  }}
 
-{code_indent}  return out;"""
+{code_indent}  return {self.gene_return_code()};"""
 
-    def gen_selected_rows_kernel_code(self, code_indent):
+    def gen_selected_rows_kernel_code(self, code_indent, inplace_flag=False):
         input_tensors, kernel_args, kernel_signature = self.get_selected_rows_kernel_args(
             code_indent)
         outputs_args, kernel_output_names, output_create = self.gene_output(
-            self.outputs['types'], 'SetSelectedRowsKernelOutput', code_indent)
+            self.outputs['types'], 'SetSelectedRowsKernelOutput', code_indent,
+            inplace_flag)
+        api_func_name = self.get_api_func_name() + ('_' if inplace_flag else '')
         return f"""
-{code_indent}  auto kernel = pten::KernelFactory::Instance().SelectKernelOrThrowError(
+{code_indent}  auto kernel = phi::KernelFactory::Instance().SelectKernelOrThrowError(
 {code_indent}      "{self.kernel['func'][1]}", {{kernel_backend, kernel_layout, kernel_data_type}});
 {code_indent}  VLOG(6) << "{self.api} API SelectedRows kernel key: [" << kernel_backend << ", " << kernel_layout << ", "<< kernel_data_type << "]";
 {code_indent}  VLOG(6) << "{self.api} API SelectedRows kernel: " << kernel;
@@ -565,35 +734,44 @@ PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str['args_declare
 
 {code_indent}  using kernel_signature = {kernel_signature};
 {code_indent}  auto* kernel_fn = kernel.GetVariadicKernelFn<kernel_signature>();
-{code_indent}  (*kernel_fn)({kernel_args}, {outputs_args});
+{code_indent}  {{
+{code_indent}    paddle::platform::RecordEvent kernel_record_event(\"{api_func_name} compute\", paddle::platform::TracerEventType::Operator, 1);
+{code_indent}    (*kernel_fn)({kernel_args}, {outputs_args});
+{code_indent}  }}
 
-{code_indent}  return out;"""
+{code_indent}  return {self.gene_return_code()};"""
 
-    def gene_api_code(self):
-        if self.is_base_api:
-            api_code = f"""
-PADDLE_API {self.outputs['return_type']} {self.api}({self.args_str["args_define"]}) {{
+    def gene_base_api_code(self, inplace_flag=False):
+        api_func_name = self.get_api_func_name() + ('_' if inplace_flag else '')
+        api_code = f"""
+PADDLE_API {self.gene_return_type_code()} {api_func_name}({self.args_str["args_define"]}) {{
 {self.gene_kernel_select()}
 """
 
-            if self.support_selected_rows_kernel:
-                code_indent = '  '
-                api_code = api_code + f"""
+        if self.support_selected_rows_kernel:
+            code_indent = '  '
+            return api_code + f"""
   if(kernel_type == KernelType::DENSE_TENSOR_KENREL){{
-{self.gen_dense_tensor_kernel_code(code_indent)}
+{self.gen_dense_tensor_kernel_code(code_indent, inplace_flag)}
   }} else {{
-{self.gen_selected_rows_kernel_code(code_indent)}      
+{self.gen_selected_rows_kernel_code(code_indent, inplace_flag)}
   }}
 }}
 """
 
-                return api_code
-            else:
-                code_indent = ''
-                return api_code + self.gen_dense_tensor_kernel_code(
-                    code_indent) + """
+        else:
+            code_indent = ''
+            return api_code + self.gen_dense_tensor_kernel_code(
+                code_indent, inplace_flag) + """
 }
 """
+
+    def gene_api_code(self):
+        if self.is_base_api:
+            api_code = self.gene_base_api_code()
+            if self.inplace_map is not None:
+                api_code = api_code + self.gene_base_api_code(inplace_flag=True)
+            return api_code
 
         else:
             inveke_func_name = self.invoke.split('(')[0].strip()

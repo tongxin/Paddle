@@ -19,7 +19,7 @@
 #include "paddle/fluid/operators/controlflow/conditional_block_op_helper.h"
 #include "paddle/fluid/operators/controlflow/recurrent_op_helper.h"
 #include "paddle/fluid/operators/controlflow/while_op_helper.h"
-#include "paddle/pten/core/kernel_factory.h"
+#include "paddle/phi/core/kernel_factory.h"
 
 PADDLE_DEFINE_EXPORTED_bool(
     new_executor_sequential_run, false,
@@ -44,32 +44,37 @@ void AsyncWorkQueue::AddTask(const OpFuncType& op_func_type,
 
 using VariableIdMap = std::map<std::string, std::vector<int>>;
 
-AtomicVectorSizeT& AsyncWorkQueue::PrepareAtomicDeps(
+void AsyncWorkQueue::PrepareAtomicDeps(
     const std::vector<size_t>& dependecy_count) {
-  if (atomic_deps_.size() != dependecy_count.size()) {
-    atomic_deps_.clear();
-    std::generate_n(std::back_inserter(atomic_deps_), dependecy_count.size(),
-                    [] { return std::make_unique<std::atomic<size_t>>(0); });
-  }
-
-  for (size_t i = 0; i < dependecy_count.size(); ++i) {
-    atomic_deps_[i]->store(dependecy_count[i]);
-  }
-  return atomic_deps_;
+  VLOG(4) << "PrepareAtomicDeps";
+  auto p = std::make_shared<
+      std::promise<std::unique_ptr<std::vector<std::atomic<size_t>>>>>();
+  atomic_deps_ = p->get_future();
+  queue_group_->AddTask(2, [&dependecy_count, p] {
+    auto* op_deps =
+        new std::vector<std::atomic<size_t>>(dependecy_count.size());
+    for (size_t i = 0; i < dependecy_count.size(); ++i) {
+      (*op_deps)[i] = dependecy_count[i];
+    }
+    VLOG(4) << "AtomicDeps:" << op_deps << " " << (*op_deps).size();
+    p->set_value(std::unique_ptr<std::vector<std::atomic<size_t>>>(op_deps));
+  });
 }
 
-AtomicVectorSizeT& AsyncWorkQueue::PrepareAtomicVarRef(
+void AsyncWorkQueue::PrepareAtomicVarRef(
     const std::vector<VariableMetaInfo>& vec_meta_info) {
-  if (atomic_var_ref_.size() != vec_meta_info.size()) {
-    atomic_var_ref_.clear();
-    std::generate_n(std::back_inserter(atomic_var_ref_), vec_meta_info.size(),
-                    [] { return std::make_unique<std::atomic<size_t>>(0); });
-  }
-
-  for (size_t i = 0; i < vec_meta_info.size(); ++i) {
-    atomic_var_ref_[i]->store(vec_meta_info[i].var_ref_count_);
-  }
-  return atomic_var_ref_;
+  VLOG(4) << "PrepareAtomicVarRef";
+  auto p = std::make_shared<
+      std::promise<std::unique_ptr<std::vector<std::atomic<size_t>>>>>();
+  atomic_var_ref_ = p->get_future();
+  queue_group_->AddTask(2, [&vec_meta_info, p] {
+    auto* var_ref = new std::vector<std::atomic<size_t>>(vec_meta_info.size());
+    for (size_t i = 0; i < vec_meta_info.size(); ++i) {
+      (*var_ref)[i] = vec_meta_info[i].var_ref_count_;
+    }
+    VLOG(4) << "AtomicVarRef:" << var_ref << " " << (*var_ref).size();
+    p->set_value(std::unique_ptr<std::vector<std::atomic<size_t>>>(var_ref));
+  });
 }
 
 bool var_can_be_deleted(const std::string& name, const BlockDesc& block) {
@@ -407,14 +412,14 @@ void build_op_func_list(const platform::Place& place,
       auto exec_ctx =
           ExecutionContext(*op_with_kernel, scope, *dev_ctx, runtime_context);
 
-      auto run_pten_kernel = false;
-      if (pten::KernelFactory::Instance().HasCompatiblePtenKernel(
+      auto run_phi_kernel = false;
+      if (phi::KernelFactory::Instance().HasCompatiblePhiKernel(
               op_with_kernel->Type())) {
-        auto pt_kernel_key = op_with_kernel->ChoosePtenKernel(exec_ctx);
-        auto pt_kernel_name = op_with_kernel->PtenKernelSignature()->name;
+        auto pt_kernel_key = op_with_kernel->ChoosePhiKernel(exec_ctx);
+        auto pt_kernel_name = op_with_kernel->PhiKernelSignature()->name;
 
-        if (op_with_kernel->PtenKernel()->IsValid()) {
-          run_pten_kernel = true;
+        if (op_with_kernel->PhiKernel()->IsValid()) {
+          run_phi_kernel = true;
         } else {
           auto kernels_iter = all_op_kernels.find(op_with_kernel->Type());
           if (kernels_iter == all_op_kernels.end() ||
@@ -422,26 +427,26 @@ void build_op_func_list(const platform::Place& place,
                   kernels_iter->second.end()) {
             auto pt_cpu_kernel_key = FallBackToCpu(
                 expected_kernel_key, pt_kernel_key, *op_with_kernel);
-            op_with_kernel->ResetPtenKernel(
-                new pten::Kernel(pten::KernelFactory::Instance().SelectKernel(
+            op_with_kernel->ResetPhiKernel(
+                new phi::Kernel(phi::KernelFactory::Instance().SelectKernel(
                     pt_kernel_name, pt_cpu_kernel_key)));
-            if (op_with_kernel->PtenKernel()->IsValid()) {
+            if (op_with_kernel->PhiKernel()->IsValid()) {
               VLOG(6) << "Static mode PrepareImpl - kernel name: "
                       << pt_kernel_name
                       << " | kernel key: " << pt_cpu_kernel_key
-                      << " | kernel: " << *(op_with_kernel->PtenKernel());
-              run_pten_kernel = true;
+                      << " | kernel: " << *(op_with_kernel->PhiKernel());
+              run_phi_kernel = true;
             }
           }
         }
       }
       VLOG(3) << op_with_kernel->Type()
               << " : expected_kernel_key : " << expected_kernel_key;
-      if (run_pten_kernel) {
-        pten::KernelContext pt_kernel_context;
-        op_with_kernel->BuildPtenKernelContext(runtime_context, dev_ctx,
-                                               &pt_kernel_context);
-        op_func_node.pt_kernel_ = op_with_kernel->PtenKernel();
+      if (run_phi_kernel) {
+        phi::KernelContext pt_kernel_context;
+        op_with_kernel->BuildPhiKernelContext(runtime_context, dev_ctx,
+                                              &pt_kernel_context);
+        op_func_node.pt_kernel_ = op_with_kernel->PhiKernel();
 
         (*op_func_node.pt_kernel_)(&pt_kernel_context);
       } else {
@@ -494,8 +499,8 @@ void build_op_func_list(const platform::Place& place,
       if (var->IsType<LoDTensor>()) {
         garbages->emplace_back(
             var->GetMutable<LoDTensor>()->MoveMemoryHolder());
-      } else if (var->IsType<pten::SelectedRows>()) {
-        garbages->emplace_back(var->GetMutable<pten::SelectedRows>()
+      } else if (var->IsType<phi::SelectedRows>()) {
+        garbages->emplace_back(var->GetMutable<phi::SelectedRows>()
                                    ->mutable_value()
                                    ->MoveMemoryHolder());
       } else if (var->IsType<LoDTensorArray>()) {
