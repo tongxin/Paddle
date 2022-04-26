@@ -43,9 +43,15 @@ void RegisterPhiKernels(host_context::KernelRegistry* registry) {
       INFRT_KERNEL(infrt::kernel::phi::CreateInitedDenseTensorF32),
       {"dims", "lod", "layout", "value"});
 
+  registry->AddKernel(
+      "phi_dt.create_host_inited_dense_tensor.f32",
+      INFRT_KERNEL(infrt::kernel::phi::CreateHostInitedDenseTensorF32),
+      {"dims", "lod", "layout", "values", "run_once"});
+
   registry->AddKernel("phi_dt.fill_dense_tensor.f32",
                       INFRT_KERNEL(infrt::kernel::phi::FillDenseTensorF32),
                       {"value"});
+
   registry->AddKernel("phi_dt.print_tensor",
                       INFRT_KERNEL(infrt::kernel::phi::PrintDenseTensor));
 
@@ -62,6 +68,9 @@ void RegisterPhiKernels(host_context::KernelRegistry* registry) {
   registry->AddKernel("phi_dt.load_params",
                       INFRT_KERNEL(infrt::kernel::phi::LoadParams),
                       {"path"});
+  registry->AddKernel("phi_dt.load_combined_params_to_gpu",
+                      INFRT_KERNEL(infrt::kernel::phi::LoadCombinedParamsToGpu),
+                      {"model_path", "params_path"});
   registry->AddKernel("phi_dt.load_combined_params",
                       INFRT_KERNEL(infrt::kernel::phi::LoadCombinedParams),
                       {"model_path", "params_path"});

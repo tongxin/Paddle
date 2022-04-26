@@ -1,4 +1,4 @@
-# Copyright (c) 2021 PaddlePaddle Authors. All Rights Reserved.
+# Copyright (c) 2022 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,422 +12,165 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-import collections
+import numpy as np
+
+from .line_search import strong_wolfe
+from .utils import _value_and_gradient, check_input_type, check_initial_inverse_hessian_estimate
+
 import paddle
-from paddle import dot, einsum
-from .bfgs_utils import vjp, ternary
-from .bfgs_utils import make_state, make_const, update_state
-from .bfgs_utils import active_state, any_active, any_active_with_predicates
-from .bfgs_utils import converged_state, failed_state
-from .bfgs_utils import as_float_tensor, vnorm_inf
-from .bfgs_utils import StopCounter, StopCounterException
-from .linesearch import hz_linesearch as linesearch
 
 
-def verify_symmetric_positive_definite_matrix(H):
+def minimize_bfgs(objective_func,
+                  initial_position,
+                  max_iters=50,
+                  tolerance_grad=1e-7,
+                  tolerance_change=1e-9,
+                  initial_inverse_hessian_estimate=None,
+                  line_search_fn='strong_wolfe',
+                  max_line_search_iters=50,
+                  initial_step_length=1.0,
+                  dtype='float32',
+                  name=None):
     r"""
-    Verifies the input matrix is symmetric positive-definite matrix.
-
-    Args:
-        H (Tensor): a square matrix of dtype float32 or float64.
-    """
-    is_positive_definite = True
-    try:
-        L = paddle.cholesky(H)
-        del L
-    except RuntimeError:
-        is_positive_definite = False
-    
-    assert is_positive_definite, (
-        f"(Batched) matrix {H} is not positive definite."
-    )
-
-    perm = list(range(len(H.shape)))
-    perm[-2:] = perm[-1], perm[-2]
-    # batch_deltas = paddle.norm(H - H.transpose(perm), axis=perm[-2:])
-    # is_symmetic = paddle.sum(batch_deltas) == 0.0
-    is_symmetric = paddle.allclose(H, H.transpose(perm))
-
-    assert is_symmetric, (
-        f"(Batched) matrix {H} is not symmetric."
-    )
-
-
-class BfgsResult(collections.namedtuple('BfgsResult', [
-                                            'iterations',
-                                            'x_location',
-                                            'converged',
-                                            'linesearch_failed',
-                                            'gradients',
-                                            'gradient_norms',
-                                            'function_results',
-                                            'inverse_hessian',
-                                            'function_evals',
-                                            'gradient_evals',
-                                            ])):
-    def __repr__(self):
-        kvs = [(f, getattr(self, f)) for f in self._fields]
-        width = max(len(f) for f in self._fields)
-        return '\n'.join(f'{k.ljust(width)} \n   {repr(v.numpy() if isinstance(v, paddle.Tensor) else v)}\n' for k, v in kvs)
-
-
-class SearchState(object):
-    r"""
-    BFFS_State is used to represent intermediate and final result of
-    the BFGS minimization.
-
-    Pulic instance members:    
-        bat (Boolean): True if the input is batched.
-        k: the iteration number.
-        state (Tensor): an int tensor of shape [...], holding the set of
-            searching states for the batch inputs. For each element,
-            0 indicates active, 1 converged and 2 failed.
-        nf (Tensor): scalar valued tensor holding the number of
-            function calls made.
-        ng (Tensor): scalar valued tensor holding the number of
-            gradient calls made.
-        ak (Tensor): step size.
-        pk (Tensor): the minimizer direction.
-        Qk (Tensor): weight for averaging function values.
-        Ck (Tensor): weighted average of function values.
-        xk (Tensor): the iterate point.
-        fk (Tensor): the ``func``'s output.
-        gk (Tensor): the ``func``'s gradients. 
-        Hk (Tensor): the approximated inverse hessian of ``func``.
-    """
-    def __init__(self, bat, xk, fk, gk, Hk, gnorm, ak=None, k=0, nf=1, ng=1):
-        self.bat = bat
-        self.xk = xk
-        self.fk = fk
-        self.gk = gk
-        self.Hk = Hk
-        self.gnorm = gnorm
-        self.k = k
-        self.ak = ak
-        self.nf = nf
-        self.ng = ng
-        self.pk = None
-        self.state = make_state(fk)
-        self.Qk = make_const(fk, 0)
-        self.Ck = make_const(fk, 0)
-        self.params = None
-
-    def reset_grads(self):
-        for field_name in dir(self):
-            field = getattr(self, field_name)
-            if isinstance(field, paddle.Tensor):
-                field.stop_gradient = True        
-
-    def result(self):
-        kw = {
-            'iterations': self.k,
-            'x_location' : self.xk,
-            'converged' : converged_state(self.state),
-            'linesearch_failed' : failed_state(self.state),
-            'gradients' : self.gk,
-            'gradient_norms': self.gnorm,
-            'function_results' : self.fk,
-            'inverse_hessian' : self.Hk,
-            'function_evals' : self.nf,
-            'gradient_evals' : self.ng,
-        }
-        return BfgsResult(**kw)
-
-
-def update_approx_inverse_hessian(state, H, s, y, enforce_curvature=False):
-    r"""Updates the approximate inverse Hessian.
-    
-    Given the input displacement s_k and the change of gradients y_k,
-    the inverse Hessian at the next iterate is approximated using the following
-    formula:
-    
-        H_k+1 = (I - rho_k * s_k * T(y_k)) * H_k * (I - rho_k * y_k * T(s_k))
-                + rho_k * s_k * T(s_k),
-    
-                            1
-        where rho_k = ----------------.
-                        T(s_k) * y_k
-
-    Note, the symmetric positive definite property of H_k+1 requires
-        
-        T(s_k) * y_k > 0.
-    
-    This is the curvature condition. It's known that a line search result that 
-    satisfies the strong Wolfe conditions is guaranteed to meet the curvature 
-    condition.
-
-    Args:
-        
-    """
-    # batch = len(s.shape) > 1
-    bat = state.bat
-    
-    with paddle.no_grad():
-        rho =  1. / einsum('...i, ...i', s, y) if bat else 1. / paddle.dot(s, y)
-        rho = ternary(paddle.isinf(rho), paddle.zeros_like(rho), rho)
-
-        # Enforces the curvature condition before updating the inverse Hessian.
-        if enforce_curvature:
-            assert not any_active_with_predicates(rho <= 0)
-        else:
-            update_state(state.state, rho <= 0, 'failed')
-
-        # By expanding the updating formula we obtain a sum of tensor products
-        #
-        #      H_k+1 = H_k 
-        #              - rho * H_k * y_k * T(s_k)    ----- (2)
-        #              - rho * s_k * T(y_k) * H_k    ----- (3)
-        #              + rho * s_k * T(s_k)                            ----- (4)
-        #              + rho * rho * (T(y_k) * H_k * y_k) s_k * T(s_k) ----- (5)
-        #
-        # Since H_k is symmetric, (3) is (2)'s transpose.
-        # H_k * y_k
-        L = paddle.cholesky(H)
-        yL = einsum('...i, ...ij', y, L)
-        
-        yLL = einsum('...j, ...ij', yL, L)
-
-        yLLy = einsum('...i, ...i', yL, yL) if bat else paddle.dot(yL, yL)
-
-        ss = einsum('...i, ...j', s, s)
-
-        syLL = einsum('...i, ...j', s, yLL)
-
-        t = einsum('..., ...ij', 1. + rho * yLLy, ss) if bat else (1. + rho * yLLy) * ss
-        t1 = t - syLL - einsum('...ij->...ji', syLL)
-        Hk_next = H + einsum('..., ...ij', rho, t1) if bat else H + rho * t1
-
-        # Hy = einsum('...ij, ...j', H, y)
-        # # T(y_k) * H_y * y_k
-        # yHy = einsum('...i, ...i', y, Hy) if bat else dot(y, Hy)
-        # syH = einsum('...i, ...j -> ...ji', Hy, s)
-        # term23 = syH + einsum('...ij->...ji', syH)
-        # # T(s_k) * s_k
-        # sTs = einsum('...i, ...j', s, s)
-
-        # if bat:
-        #     term45 = einsum('...ij, ...', sTs, 1 + rho * yHy)
-        #     Hk_next = H + einsum('...ij, ...', term45 - term23, rho)
-        # else:
-        #     term45 = sTs * (1 + rho * yHy)
-        #     Hk_next = H + (term45 - term23) * rho
-
-        return Hk_next
-
-
-def iterates(func,
-             x0,
-             dtype='float32',
-             H0=None,
-             gtol=1e-8,
-             xtol=0,
-             iters=50,
-             ls_iters=50):
-    r"""minimizes a differentiable function `func` using the BFGS method,
-    generating one iterate at a time.
-
-    Reference:
-        Jorge Nocedal, Stephen J. Wright, Numerical Optimization,
-        Second Edition, 2006.
-
-    Args:
-        func: the objective function to minimize. ``func`` accepts
-            a multivariate input and returns a scalar, both allowed
-            batching into tensors in shape [..., n] and [...].
-        x0 (Tensor): the starting point of the iterates. The batching
-            form has the shape [..., n].
-        dtype ('float' | 'float32' | 'float64' | 'double'): the data
-            type to be used.
-        H0 (Tensor): the initial inverse hessian approximation. The
-            batching form has the shape [..., n, n], where the
-            batching dimensions have the same shape with ``x0``.
-            The default value is None.
-        gtol (Scalar): terminates if the gradient norm is smaller than
-            this `gtol`. Currently gradient norm uses inf norm.
-            The default value is 1e-8.
-        xtol (Scalar): terminates if the distance of succesive iterates
-            is smaller than this value. The default value is 0.
-        iters (Scalar): the maximum number minimization iterations.
-            The default value is 50.
-        ls_iters (Scalar): the maximum number of line search iterations.
-            The default value is 50.
-    
-    Returns:
-        A generator which yields the result `SearchState` for each iteration.
-    """
-    # Proprocesses inputs and control parameters 
-    x0 = as_float_tensor(x0, dtype)
-    dtype = x0.dtype
-
-    gtol = as_float_tensor(gtol, dtype)
-    xtol = as_float_tensor(xtol, dtype)
-
-    # Evaluates the starting points
-    f0, g0 = vjp(func, x0)
-    
-    # If function is applied to batched input, the last axis of the input
-    # tensor holds the input dimensions. However, it's tricky to determine
-    # whether a function is actually applied in the batch mode. We assume here
-    # that the input being multi-dimensional necessarily implies batching.
-    bat = len(x0.shape) > 1
-    input_dim = x0.shape[-1]
-    hessian_shape = x0.shape + [input_dim]
-    
-    # The initial approximation of the inverse Hessian.
-    if H0 is None:
-        I = paddle.eye(input_dim, dtype=dtype)
-        H0 = paddle.broadcast_to(I, hessian_shape)
-    else:
-        H0 = as_float_tensor(H0, dtype)        
-        verify_symmetric_positive_definite_matrix(H0)
-
-    # Puts the starting points in the initial state and kicks off the
-    # minimization process.
-    gnorm = vnorm_inf(g0)
-    state = SearchState(bat, x0, f0, g0, H0, gnorm)
-
-    # Updates the state tensor on the newly converged elements.
-    state.state = update_state(state.state, gnorm < gtol, 'converged')
-
-    try:
-        # Starts to count the number of iterations.
-        iter_count = StopCounter(iters)
-        iter_count.increment()
-
-        while any_active(state.state):
-            k, xk, fk, gk, Hk = state.k, state.xk, state.fk, state.gk, state.Hk
-
-            # The negative product of inverse Hessian and gradients - H_k * g_k
-            # is used as the line search direction. 
-            state.pk = pk = -einsum('...ij, ...j', Hk, gk)
-
-            # Performs line search and updates the state
-            linesearch(state,
-                       func, 
-                       gtol=gtol,
-                       xtol=xtol,
-                       max_iters=ls_iters)
-        
-            # Uses the obtained search steps to generate next iterates.
-            if bat:
-                next_xk = xk + state.ak.unsqueeze(-1) * pk
-            else:
-                next_xk = xk + state.ak * pk
-            # Calculates displacement s_k = x_k+1 - x_k
-            
-            sk = next_xk - xk
-
-            # Obtains the function values and gradients at x_k+1
-            next_fk, next_gk = vjp(func, next_xk)
-    
-            # Calculates the gradient difference y_k = g_k+1 - g_k
-            yk = next_gk - gk
-    
-            # Updates the approximate inverse hessian
-            next_Hk = update_approx_inverse_hessian(state, Hk, sk, yk)
-            
-            # Calculates the gradient norms
-            next_gnorm = vnorm_inf(next_gk)
-
-            # Finally transitions to the next state
-            p = active_state(state.state)
-            state.xk = ternary(p, next_xk, xk)
-            state.fk = ternary(p, next_fk, fk)
-            state.gk = ternary(p, next_gk, gk)
-            state.Hk = ternary(p, next_Hk, Hk)
-            state.gnorm = ternary(p, next_gnorm, state.gnorm)
-
-            # Updates the state on the newly converged elements.
-            state.state = update_state(state.state, state.gnorm < gtol, 'converged')
-            state.reset_grads()
-
-            state.k = k + 1
-
-            # Counts iterations
-            iter_count.increment()
-
-            yield state
-    except StopCounterException:
-        pass
-    finally:
-        return
-
-
-def minimize(func,
-             x0,
-             dtype='float32',
-             H0=None,
-             gtol=1e-8,
-             xtol=0,
-             iters=50,
-             ls_iters=50,
-             summary_only=True):
-    r"""Minimizes a differentiable function `func` using the BFGS method.
-
-    The BFGS is a quasi-Newton method for solving an unconstrained
-    optimization problem over a differentiable function.
-
-    Closely related is the Newton method for minimization. Consider the iterate 
-    update formula
+    Minimizes a differentiable function `func` using the BFGS method.
+    The BFGS is a quasi-Newton method for solving an unconstrained optimization problem over a differentiable function.
+    Closely related is the Newton method for minimization. Consider the iterate update formula:
 
     .. math::
+        x_{k+1} = x_{k} + H_k \nabla{f_k}
 
-        x_{k+1} = x_{k} + H^{-1} \nabla{f},
-
-    If $H$ is the Hessian of $f$ at $x_{k}$, then it's the Newton method.
-    If $H$ is positive definite, used as an approximation of the Hessian, then 
+    If :math:`H_k` is the inverse Hessian of :math:`f` at :math:`x_k`, then it's the Newton method.
+    If :math:`H_k` is symmetric and positive definite, used as an approximation of the inverse Hessian, then 
     it's a quasi-Newton. In practice, the approximated Hessians are obtained
     by only using the gradients, over either whole or part of the search 
-    history.
+    history, the former is BFGS, the latter is L-BFGS.
 
-    Reference:
-        Jorge Nocedal, Stephen J. Wright, Numerical Optimization,
-        Second Edition, 2006.
+    Reference: 
+        Jorge Nocedal, Stephen J. Wright, Numerical Optimization, Second Edition, 2006. pp140: Algorithm 6.1 (BFGS Method).
 
     Args:
-        func: the objective function to minimize. ``func`` accepts
-            a multivariate input and returns a scalar, both allowed
-            batching into tensors in shape [..., n] and [...].
-        x0 (Tensor): the starting point of the iterates. The batching
-            form has the shape [..., n].
-        dtype ('float' | 'float32' | 'float64' | 'double'): the data
-            type to be used.
-        H0 (Tensor): the initial inverse hessian approximation. The
-            batching form has the shape [..., n, n], where the
-            batching dimensions have the same shape with ``x0``.
-            The default value is None.
-        gtol (Scalar): terminates if the gradient norm is smaller than
-            this `gtol`. Currently gradient norm uses inf norm.
-            The default value is 1e-8.
-        xtol (Scalar): terminates if the distance of succesive iterates
-            is smaller than this value. The default value is 0.
-        iters (Scalar): the maximum number minimization iterations.
-            The default value is 50.
-        ls_iters (Scalar): the maximum number of line search iterations.
-            The default value is 50.
-        summary_only (boolean, optional): specifies the result type. If True 
-            then returns the final result. Otherwise returns the results of
-            all steps.
-    
+        objective_func: the objective function to minimize. ``objective_func`` accepts a multivariate input and returns a scalar.
+        initial_position (Tensor): the starting point of the iterates. 
+        max_iters (int, optional): the maximum number of minimization iterations. Default value: 50.
+        tolerance_grad (float, optional): terminates if the gradient norm is smaller than this. Currently gradient norm uses inf norm. Default value: 1e-7.
+        tolerance_change (float, optional): terminates if the change of function value/position/parameter between two iterations is smaller than this value. Default value: 1e-9.
+        initial_inverse_hessian_estimate (Tensor, optional): the initial inverse hessian approximation at initial_position. It must be symmetric and positive definite. Default value: None.
+        line_search_fn (str, optional): indicate which line search method to use, only support 'strong wolfe' right now. May support 'Hager Zhang' in the futrue. Default value: 'strong wolfe'.
+        max_line_search_iters (int, optional): the maximum number of line search iterations. Default value: 50.
+        initial_step_length (float, optional): step length used in first iteration of line search. different initial_step_length may cause different optimal result. For methods like Newton and quasi-Newton the initial trial step length should always be 1.0. Default value: 1.0.
+        dtype ('float32' | 'float64', optional): data type used in the algorithm. Default value: 'float32'.
+        name (str, optional): Name for the operation. For more information, please refer to :ref:`api_guide_Name`. Default value: None.
+
     Returns:
-        summary (BfgsResult): The final optimization results if `summary_only`
-            is set True.
-        results (list[BfgsResult]): the results of all steps if `summary_only`
-            is set False.
+        output(tuple):
+
+            - is_converge (bool): Indicates whether found the minimum within tolerance.
+            - num_func_calls (int): number of objective function called.
+            - position (Tensor): the position of the last iteration. If the search converged, this value is the argmin of the objective function regrading to the initial position.
+            - objective_value (Tensor): objective function value at the `position`.
+            - objective_gradient (Tensor): objective function gradient at the `position`.
+            - inverse_hessian_estimate (Tensor): the estimate of inverse hessian at the `position`.
+
+    Examples:
+        .. code-block:: python
+
+            import paddle
+            
+            def func(x):
+                return paddle.dot(x, x)
+
+            x0 = paddle.to_tensor([1.3, 2.7])
+            results = paddle.incubate.optimizer.functional.minimize_bfgs(func, x0)
+            print("is_converge: ", results[0])
+            print("the minimum of func is: ", results[2])
+            # is_converge:  is_converge:  Tensor(shape=[1], dtype=bool, place=Place(gpu:0), stop_gradient=True,
+            #        [True])
+            # the minimum of func is:  Tensor(shape=[2], dtype=float32, place=Place(gpu:0), stop_gradient=True,
+            #        [0., 0.])
     """
-    states = []
-    final_state = None
-    for state in iterates(func, x0, dtype, H0, gtol, xtol, iters, ls_iters):
-        if summary_only:
-            final_state = state
-        else:
-            states.append(state)
 
-    if summary_only:
-        if final_state:
-            return final_state.result()
-        else:
-            return {}
+    if dtype not in ['float32', 'float64']:
+        raise ValueError(
+            "The dtype must be 'float32' or 'float64', but the specified is {}.".
+            format(dtype))
 
-    return [s.result() for s in states]
+    op_name = 'minimize_bfgs'
+    check_input_type(initial_position, 'initial_position', op_name)
+
+    I = paddle.eye(initial_position.shape[0], dtype=dtype)
+    if initial_inverse_hessian_estimate is None:
+        initial_inverse_hessian_estimate = I
+    else:
+        check_input_type(initial_inverse_hessian_estimate,
+                         'initial_inverse_hessian_estimate', op_name)
+        check_initial_inverse_hessian_estimate(initial_inverse_hessian_estimate)
+
+    Hk = paddle.assign(initial_inverse_hessian_estimate)
+    # use detach and assign to create new tensor rather than =, or xk will share memory and grad with initial_position
+    xk = paddle.assign(initial_position.detach())
+
+    value, g1 = _value_and_gradient(objective_func, xk)
+    num_func_calls = paddle.full(shape=[1], fill_value=1, dtype='int64')
+
+    # when the dim of x is 1000, it needs more than 30 iters to get all element converge to minimum.
+    k = paddle.full(shape=[1], fill_value=0, dtype='int64')
+    done = paddle.full(shape=[1], fill_value=False, dtype='bool')
+    is_converge = paddle.full(shape=[1], fill_value=False, dtype='bool')
+
+    def cond(k, done, is_converge, num_func_calls, xk, value, g1, Hk):
+        return (k < max_iters) & ~done
+
+    def body(k, done, is_converge, num_func_calls, xk, value, g1, Hk):
+        #############    compute pk    #############
+        pk = -paddle.matmul(Hk, g1)
+
+        #############    compute alpha by line serach    #############
+        if line_search_fn == 'strong_wolfe':
+            alpha, value, g2, ls_func_calls = strong_wolfe(
+                f=objective_func,
+                xk=xk,
+                pk=pk,
+                initial_step_length=initial_step_length,
+                dtype=dtype)
+        else:
+            raise NotImplementedError(
+                "Currently only support line_search_fn = 'strong_wolfe', but the specified is '{}'".
+                format(line_search_fn))
+        num_func_calls += ls_func_calls
+
+        #############    update Hk    #############
+        sk = alpha * pk
+        yk = g2 - g1
+
+        xk = xk + sk
+        g1 = g2
+
+        sk = paddle.unsqueeze(sk, 0)
+        yk = paddle.unsqueeze(yk, 0)
+
+        rhok_inv = paddle.dot(yk, sk)
+        rhok = paddle.static.nn.cond(
+            rhok_inv == 0., lambda: paddle.full(shape=[1], fill_value=1000.0, dtype=dtype), lambda: 1. / rhok_inv)
+
+        Vk_transpose = I - rhok * sk * yk.t()
+        Vk = I - rhok * yk * sk.t()
+        Hk = paddle.matmul(paddle.matmul(Vk_transpose, Hk),
+                           Vk) + rhok * sk * sk.t()
+
+        k += 1
+
+        #############    check convergence    #############
+        gnorm = paddle.linalg.norm(g1, p=np.inf)
+        pk_norm = paddle.linalg.norm(pk, p=np.inf)
+        paddle.assign(done | (gnorm < tolerance_grad) |
+                      (pk_norm < tolerance_change), done)
+        paddle.assign(done, is_converge)
+        # when alpha=0, there is no chance to get xk change.
+        paddle.assign(done | (alpha == 0.), done)
+        return [k, done, is_converge, num_func_calls, xk, value, g1, Hk]
+
+    paddle.static.nn.while_loop(
+        cond=cond,
+        body=body,
+        loop_vars=[k, done, is_converge, num_func_calls, xk, value, g1, Hk])
+    return is_converge, num_func_calls, xk, value, g1, Hk
